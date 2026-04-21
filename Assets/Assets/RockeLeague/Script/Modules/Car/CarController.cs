@@ -56,7 +56,7 @@ public class CarController : NetworkBehaviour
 
     // Cached input values for this tick
     private float xinput, yinput, rollInput;
-    private bool jumpPressed, boostPressed, drifting;
+    private bool jumpPressed, drifting;
 
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -103,7 +103,7 @@ public class CarController : NetworkBehaviour
         yinput    = input.Move.x;
         rollInput = input.Roll;
         jumpPressed  = input.Jump;
-        boostPressed = input.Boost;
+        isBoosting = input.Boost;
         drifting     = input.Drift;
 
         CheckGrounded();

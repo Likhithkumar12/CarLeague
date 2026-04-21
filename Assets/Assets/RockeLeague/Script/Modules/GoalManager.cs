@@ -122,7 +122,7 @@ public class GoalManager : MonoBehaviour
             winner = "Blue";
         else
             winner = "Draw";
-
+        ResetMatch();
         ShowResult(winner);
     }
 
@@ -185,5 +185,28 @@ public class GoalManager : MonoBehaviour
                 }
             }
         }
+    }
+    public void ResetMatch()
+    {
+        // Stop any running goal coroutine so it doesn't bleed into next match
+        StopAllCoroutines();
+ 
+        _redScore    = 0;
+        _blueScore   = 0;
+        _matchOver   = false;
+        _showingGoal = false;
+ 
+        // Reset ball to centre
+        ResetBall();
+ 
+        // Reset all goal triggers
+        foreach (var gt in goalTriggers)
+            gt?.ResetTrigger();
+ 
+        // Clear the display text
+        if (txtDisplay != null)
+            txtDisplay.text = "";
+ 
+        Debug.Log("[GoalManager] Match reset.");
     }
 }

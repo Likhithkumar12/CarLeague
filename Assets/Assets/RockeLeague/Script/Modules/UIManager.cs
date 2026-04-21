@@ -208,18 +208,30 @@ public class UIManager : MonoBehaviour
     }
 
     private void OnLeaveToMenu()
-    {
-        // Disconnect from network
-        if (NetworkManager.Instance != null)
+    { if (NetworkManager.Instance != null)
         {
             NetworkManager.Instance.Disconnect();
+            Debug.Log("[UIManager] Disconnected from room.");
         }
-
-        // Clear session
+ 
+        // 2. Clear match session data (scores, timer, car map, etc.)
         if (GameSessionManager.Instance != null)
         {
             GameSessionManager.Instance.ClearSession();
+            Debug.Log("[UIManager] Session cleared.");
         }
+ 
+        // 3. Reset local UI state so the lobby is fresh next time
+        _playerCount = 0;
+        _isHosting   = false;
+ 
+        if (btnConfirm != null)  btnConfirm.interactable = true;
+        if (txtStatus != null)   txtStatus.text = "";
+        if (inputRoomName != null) inputRoomName.text = "";
+ 
+        // 4. Back to Main Menu — same scene, just swap screens
+        Show(screenMain);
+        Debug.Log("[UIManager] Returned to Main Menu.");
         
     }
 
@@ -283,7 +295,7 @@ public class UIManager : MonoBehaviour
 
         if (txtResultScore != null)
         {
-            txtResultScore.text = $"Final Score\n<color=red>RED {redScore}</color> - <color=cyan>BLUE {blueScore}</color>";
+            txtResultScore.text = $"Final Score\n<color=red>RED {redScore}</color> - <color=blue>BLUE {blueScore}</color>";
         }
 
         Show(screenResult);

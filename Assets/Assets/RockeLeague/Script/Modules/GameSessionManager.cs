@@ -92,6 +92,25 @@ public class GameSessionManager : MonoBehaviour
         _timerRunning = false;
         Debug.Log("[GameSession] Timer stopped");
     }
+    #if UNITY_EDITOR
+        [ContextMenu("Debug / Finish Match Now")]
+    #endif
+        public void DebugFinishMatch()
+        {
+            Debug.LogWarning("[GameSession] DEBUG: DebugFinishMatch() called — forcing match end.");
+            ExpireTimer();
+        }
+     
+        // ─── Internal timer expiry (single source of truth) ───────────────────────
+     
+        private void ExpireTimer()
+        {
+            _matchTimeRemaining = 0;
+            _timerRunning = false;
+            OnTimerExpired?.Invoke();
+            Debug.Log("[GameSession] Timer expired!");
+        }
+
 
     public void ResetTimer()
     {
