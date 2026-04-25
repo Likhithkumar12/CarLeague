@@ -1,4 +1,5 @@
 using System.Collections;
+using Fusion;
 using UnityEngine;
 using UnityEngine.UI;
 using TMPro;
@@ -7,7 +8,7 @@ using TMPro;
 /// Single source of truth for scores and goal events.
 /// Uses a single TextMeshPro for score display and goal announcements.
 /// </summary>
-public class GoalManager : MonoBehaviour
+public class GoalManager : NetworkBehaviour
 {
     public static GoalManager Instance { get; private set; }
 
@@ -132,12 +133,25 @@ public class GoalManager : MonoBehaviour
     {
         if (txtDisplay == null) return;
 
-        string timer = GameSessionManager.Instance != null 
-            ? GameSessionManager.Instance.GetFormattedTime() 
+        string timer = GameSessionManager.Instance != null
+            ? GameSessionManager.Instance.GetFormattedTime()
             : "00:00";
 
         txtDisplay.fontSize = 48;
-        txtDisplay.text = $"<color=red>RED {_redScore}</color>  - <color=blue>BLUE {_blueScore}</color>\n<size=36>Time: {timer}</size>";
+
+    
+        int localTeam = GameSessionManager.Instance != null
+            ? GameSessionManager.Instance.LocalPlayerTeam
+            : 0;
+
+        if (localTeam == 1)
+        {
+            txtDisplay.text = $"<color=blue>BLUE {_blueScore}</color>  -  <color=red>RED {_redScore}</color>\n<size=36>Time: {timer}</size>";
+        }
+        else
+        {
+            txtDisplay.text = $"<color=red>RED {_redScore}</color>  -  <color=blue>BLUE {_blueScore}</color>\n<size=36>Time: {timer}</size>";
+        }
     }
 
     private void ResetBall()

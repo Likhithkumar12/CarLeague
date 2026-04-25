@@ -198,11 +198,18 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
         spawnedPlayers[player] = networkPlayerObject;
 
-        // Assign team to the car
+       
         if (networkPlayerObject.TryGetComponent<CarTeamAssignment>(out var teamComp))
         {
             teamComp.SetTeam(team);
+
+         
+            if (player == runner.LocalPlayer)
+            {
+                GameSessionManager.Instance?.SetLocalPlayerTeam(team);
+            }
         }
+
 
         Debug.Log($"[NetworkManager] Spawned player {player} | PlayerIndex: {playerIndex} | Car: {carIndex} | Team: {team} | Pos: {spawnPoint.position}");
     }

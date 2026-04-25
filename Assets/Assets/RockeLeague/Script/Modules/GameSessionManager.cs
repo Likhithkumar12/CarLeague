@@ -72,12 +72,14 @@ public class GameSessionManager : MonoBehaviour
         Debug.Log($"[GameSession] Match mode set to: {mode}");
     }
 
-    public void SetLocalCarIndex(int index)
-    {
-        LocalCarIndex = index;
-        Debug.Log($"[GameSession] Local car index: {index}");
-    }
+  
+    public int LocalPlayerTeam { get; private set; } = 0; // 0 = Red, 1 = Blue
 
+    public void SetLocalPlayerTeam(int team)
+    {
+        LocalPlayerTeam = team;
+        Debug.Log($"[GameSession] Local player team: {team}");
+    }
     // ─── Timer Control ────────────────────────────────────────────────────────
 
     public void StartTimer()

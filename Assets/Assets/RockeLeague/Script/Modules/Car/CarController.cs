@@ -121,10 +121,10 @@ public class CarController : NetworkBehaviour
             yInputReleasedAfterJump = true;
             rollInputReleasedAfterJump = true;
         }
-
+    
         bool onAnySurface = isGrounded || isOnSurface;
-        isDrifting = onAnySurface && drifting;
-        HandleDrift(isDrifting);
+        isDrifting = onAnySurface && drifting && Mathf.Abs(yinput) > 0.1f;;
+     
 
         if (onAnySurface)
             HandleDriving();
@@ -234,8 +234,9 @@ public class CarController : NetworkBehaviour
         float forwardSpeed = Vector3.Dot(transform.forward, rb.linearVelocity);
         float speedFactor = Mathf.InverseLerp(0, currentMaxSpeed, Mathf.Abs(forwardSpeed));
         float currentMotorTorque = Mathf.Lerp(motorTorque, motorTorque * 0.1f, speedFactor);
-        float currentSteerRange = Mathf.Lerp(steeringRange, steeringRangeAtMaxSpeed, speedFactor)
-                                  * (isDrifting ? driftSteerMultiplier : 1f);
+        
+        float currentSteerRange = Mathf.Lerp(steeringRange, steeringRangeAtMaxSpeed, speedFactor);
+
         bool isAccelerating = Mathf.Sign(xinput) == Mathf.Sign(forwardSpeed);
 
         foreach (var wheel in wheels)
@@ -254,6 +255,11 @@ public class CarController : NetworkBehaviour
                 wheel.WheelCollider.brakeTorque = Mathf.Abs(xinput) * brakeTorque;
                 wheel.WheelCollider.motorTorque = 0;
             }
+
+          
+            WheelFrictionCurve sidewaysFriction = wheel.WheelCollider.sidewaysFriction;
+            sidewaysFriction.stiffness = isDrifting ? 0.35f : 1f;
+            wheel.WheelCollider.sidewaysFriction = sidewaysFriction;
         }
 
         if (rb.linearVelocity.magnitude > currentMaxSpeed)
