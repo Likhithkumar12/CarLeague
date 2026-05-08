@@ -5,6 +5,8 @@ using Fusion;
 using Fusion.Sockets;
 using System;
 using System.Threading.Tasks;
+using Fusion.Addons.Physics;
+using Unity.VisualScripting;
 using UnityEngine.SceneManagement;
 
 public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
@@ -34,6 +36,13 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     public event Action<PlayerRef> OnPlayerJoined_Event;
     public event Action<PlayerRef> OnPlayerLeft_Event;
     private CarInput _carInput;
+    private bool _localCarReady = false;
+
+    /// <summary>
+    /// Called by CarController.Spawned() on the InputAuthority client
+    /// to signal that the local car exists and input should be sent.
+    /// </summary>
+    public void SetLocalCarReady(bool ready) => _localCarReady = ready;
 
     void Awake()
     {
@@ -50,7 +59,6 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
 
     public async Task StartHost(string roomName, GameMode gameMode)
     {
-        // Clean up any existing runner first
         if (Runner != null)
         {
             await Runner.Shutdown();
@@ -59,10 +67,9 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
 
         Runner = gameObject.AddComponent<NetworkRunner>();
-        Runner.ProvideInput = true;
-        Runner.AddCallbacks(this); // explicitly register callbacks
-
-        var scene = SceneRef.FromIndex(SceneManager.GetActiveScene().buildIndex);
+        Runner.AddComponent<RunnerSimulatePhysics>();
+        Runner.ProvideInput = true; // Host also plays, so this is correct
+        Runner.AddCallbacks(this);
 
         var startArgs = new StartGameArgs
         {
@@ -92,6 +99,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         }
 
         Runner = gameObject.AddComponent<NetworkRunner>();
+        Runner.AddComponent<RunnerSimulatePhysics>();
         Runner.ProvideInput = true;
         Runner.AddCallbacks(this);
 
@@ -104,13 +112,9 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         var result = await Runner.StartGame(startArgs);
 
         if (result.Ok)
-        {
             OnSessionStarted?.Invoke();
-        }
         else
-        {
             OnConnectionFailed?.Invoke(result.ShutdownReason.ToString());
-        }
     }
 
     public void Disconnect()
@@ -250,6 +254,17 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         Debug.Log($"[NetworkManager] GetSpawnPoint: mode={mode}, team={team}, playerIndex={playerIndex}, teamPlayerIndex={teamPlayerIndex}, slot={slot}, pos={points[slot].position}");
         return points[slot];
     }
+    public void LockRoom()
+    {
+        if (Runner == null || !Runner.IsServer) return;
+
+        // IsOpen = false → no new players can join
+        // IsVisible = false → room disappears from lobby list
+        Runner.SessionInfo.IsOpen = false;
+        Runner.SessionInfo.IsVisible = false;
+
+        Debug.Log("[NetworkManager] Room locked — no new players can join.");
+    }
 
 
     // ─── Unused but required callbacks ────────────────────────────────────────
@@ -257,6 +272,16 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
     // In NetworkManager.cs — replace the empty OnInput
     public void OnInput(NetworkRunner runner, NetworkInput input)
     {
+        // ── CRITICAL: Only provide input for the LOCAL player ──
+        // Fusion calls this once per tick. runner.LocalPlayer is always
+        // the machine's own player. Never provide input for remote players.
+        if (!runner.IsRunning) return;
+        if (runner.LocalPlayer == PlayerRef.None) return;
+
+        // Only read input if our local car has spawned
+        // (flag is set by CarController.Spawned on InputAuthority)
+        if (!_localCarReady) return;
+
         var data = new CarInputData
         {
             Move  = _carInput.car.Move.ReadValue<Vector2>(),
@@ -273,6 +298,7 @@ public class NetworkManager : MonoBehaviour, INetworkRunnerCallbacks
         Debug.Log($"[NetworkManager] Runner shutdown: {shutdownReason}");
         playerCount = 0;
         spawnedPlayers.Clear();
+        _localCarReady = false;
 
         if (Runner != null)
         {

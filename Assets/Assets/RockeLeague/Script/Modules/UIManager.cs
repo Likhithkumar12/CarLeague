@@ -194,6 +194,7 @@ public class UIManager : MonoBehaviour
         if (GameStateNetwork.Instance != null)
         {
             Debug.Log("start");
+            NetworkManager.Instance?.LockRoom();
             GameStateNetwork.Instance.RPC_StartGame();
         }
     }

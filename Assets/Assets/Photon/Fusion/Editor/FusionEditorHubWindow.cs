@@ -124,10 +124,18 @@ namespace Fusion.Editor {
             for (int i = _pages.Count - 1; i >= 0; i--) {
               if (string.IsNullOrEmpty(_pages[i].OverwritePage) == false) {
                 var index = _pages.FindIndex(p => string.Equals(p.Title, _pages[i].OverwritePage, StringComparison.Ordinal));
-                if (index >= 0) {
+                if (index >= 0 && index != i) {
                   _pages[index] = _pages[i];
                   _pages.RemoveAt(i);
                 }
+              }
+            }
+            
+            // Remove pages with no elements. This allows for overwriting a page to hide it
+            for (int i = _pages.Count - 1; i >= 0; i--) {
+              var page = _pages[i];
+              if (page.Elements.Count == 0) {
+                _pages.RemoveAt(i);
               }
             }
 

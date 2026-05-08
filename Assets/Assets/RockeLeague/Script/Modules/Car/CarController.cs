@@ -41,6 +41,8 @@ public class CarController : NetworkBehaviour
     // ── Networked State ───────────────────────────────────────────────────────
     [Networked] private float NetworkedBoostFuel { get; set; }
     [Networked] private NetworkBool NetworkedIsBoosting { get; set; }
+    [Networked] private NetworkBool NetworkedIsGrounded { get; set; }
+    [Networked] private NetworkBool NetworkedIsOnSurface { get; set; }
 
     // ── Private State ─────────────────────────────────────────────────────────
     private WheelController[] wheels;
@@ -69,33 +71,44 @@ public class CarController : NetworkBehaviour
         if (wheels.Length > 0)
             normalSidewaysFriction = wheels[0].WheelCollider.sidewaysFriction.stiffness;
 
-        NetworkedBoostFuel = maxBoostFuel;
-
-        // Disable physics simulation on non-authority clients
-        // Fusion's NetworkRigidbody handles syncing position/rotation
-        Debug.Log($"[Car Spawned] Name: {gameObject.name} | HasInputAuthority: {HasInputAuthority} | CameraManager exists: {CameraManager.Instance != null}");
-
-        if (HasInputAuthority)
+        if (HasStateAuthority)
         {
-            // Our car — simulate physics normally
-            rb.isKinematic = false;
-            CameraManager.Instance?.AssignToLocalCar(this);
+            NetworkedBoostFuel = maxBoostFuel;
+        }
+
+       
+        Debug.Log($"[Car Spawned] Name: {gameObject.name} | HasInputAuthority: {HasInputAuthority} | HasStateAuthority: {HasStateAuthority} | CameraManager exists: {CameraManager.Instance != null}");
+
+        if (HasStateAuthority)
+        {
+           
+            rb.interpolation = RigidbodyInterpolation.None;
         }
         else
         {
-            // Remote car — NetworkTransform drives position
-            // Physics must be kinematic so it doesn't fight NetworkTransform
+           
             rb.isKinematic = true;
             rb.interpolation = RigidbodyInterpolation.Interpolate;
         }
+
+        
+        if (HasInputAuthority)
+        {
+            
+            if (NetworkManager.Instance != null)
+                NetworkManager.Instance.SetLocalCarReady(true);
+
+            CameraManager.Instance?.AssignToLocalCar(this);
+        }
     }
 
-    // ── Fusion Tick — runs on all clients in sync ─────────────────────────────
+    
 
     public override void FixedUpdateNetwork()
     {
-        if (!HasInputAuthority) return;
-        // Only the authority (the owning player) drives physics
+        // Only the state authority (server/host) runs physics simulation.
+        // GetInput() retrieves the input from the owning player on the state authority.
+        if (!HasStateAuthority) return;
         if (!GetInput(out CarInputData input)) return;
 
         // Unpack input
@@ -108,6 +121,10 @@ public class CarController : NetworkBehaviour
 
         CheckGrounded();
         CheckSurface();
+
+        // Sync grounded state to all clients (used by camera)
+        NetworkedIsGrounded = isGrounded;
+        NetworkedIsOnSurface = isOnSurface;
         TrackInputReleaseAfterJump();
         HandleSurfaceGravity();
 
@@ -323,7 +340,7 @@ public class CarController : NetworkBehaviour
         NetworkedBoostFuel = Mathf.Min(NetworkedBoostFuel + amount, maxBoostFuel);
 
     public float GetBoostFuel() => NetworkedBoostFuel;
-    public bool IsGrounded() => isGrounded;
-    public bool IsOnSurface() => isOnSurface;
+    public bool IsGrounded() => HasStateAuthority ? isGrounded : (bool)NetworkedIsGrounded;
+    public bool IsOnSurface() => HasStateAuthority ? isOnSurface : (bool)NetworkedIsOnSurface;
     public Vector3 GetSurfaceNormal() => surfaceNormal;
 }

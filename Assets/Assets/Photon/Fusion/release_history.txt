@@ -1,6 +1,95 @@
+# 2.1.1
+
+## Preview
+
+### Build 2018 (May 07, 2026)
+
+**Breaking Changes**
+
+- CustomForecastDelegate params updated so that ticksToExtrapolate is calculated externally and passed in, to avoid unnecessary boiler-plate code
+
+**Changes**
+
+- Fusion Intro now programmatically switches between new and legacy input systems
+
+### Build 1996 (May 05, 2026)
+
+**Bug Fixes**
+
+- Fixed: Align _inputTick with resumed sim tick on host migration
+- Fixed: DestroyWhenStateAuthorityLeaves prefab flag is now independent from the AllowStateAuthorityOverride
+
+### Build 1981 (Apr 30, 2026)
+
+**What's New**
+
+- Adds a new `NetworkRunner` property, `InputTick`, that returns the tick of the most recent input collected (or the input being collected, if read in `OnInput`). The input delay implementation changed the timing of `OnInput` within the frame, so `OnInput` can no longer interpret `Runner.Tick` as "the tick this input is for". `Runner.InputTick` should be used instead
+
+**Bug Fixes**
+
+- Fixed: An issue where the user's configured input delay wasn't applied to the host's simulation
+- Fixed: Odin Inspector's [ShowInInspector] fields no longer show in Inspector for NetworkBehaviours
+- Fixed: Issue when teleporting during forecast would return to undesirable position
+- Fixed: Revert delayed GameObject Spawn as it caused issues with OnChangedRender, see `NetworkObject.IsRenderInterpolationReady` for new API that allows GameObjects to be hidden between spawn and render interpolation
+- Fixed: RPCs from generic base classes resulting in "Target behaviour is not of the correct type" errors
+- Fixed: Editor compile error around GUID in Unity 6000.4
+- Fixed: Crash in mono release builds when an exception is thrown in a specific block of code
+
+### Build 1965 (Apr 27, 2026)
+
+**Breaking Changes**
+
+- Update protocol for greater reliability with Custom Plugins, update to this SDK or newer is required
+
+**What's New**
+
+- `NetworkSpawnStatus.FailedSimulationNotRunning`
+
+**Bug Fixes**
+
+- Fixed: DisableNATPunchthrough causing invalid connections
+- Fixed: Spawn position of the built-in NetworkCharacterController on proxies has been fixed
+
 # 2.1.0
 
 ## Preview
+
+### Build 1937 (Apr 20, 2026)
+
+**What's New**
+
+- Interactive inspector icons for networked property
+
+**Changes**
+
+- Update to Photon Realtime SDK to 5.1.12
+
+**Bug Fixes**
+
+- Fixed: GetPlayerObject & GetPlayerUserId Exception for Rejoined Players in Shared Mode
+
+### Build 1901 (Apr 01, 2026)
+
+**What's New**
+
+- `NetworkProjectConfig.InvokeRenderMode`, replaces old `NetworkProjectConfig.InvokeRenderInBatchMode` and can now also disable `Render` for more use cases
+- `Tools/Fusion/Plugin` submenu. Items are only active if there's a global asset of `FusionPluginProjectSettings` asset
+- PluginCodeExportSettingsAttribute
+- HasCustomLogicUser override for custom plugin presence detection
+- Plugin export callbacks
+- `NetworkRunner.Spawn` overloads accepting a prefab name or path
+
+**Changes**
+
+- `NetworkProjectConfig.InvokeRenderInBatchMode` is now obsolete
+- Children NetworkObjects with a different state authority than the parent object are now separated from the hierarchy when the parent is despawned
+
+**Bug Fixes**
+
+- Fixed: [Weaver] Error when using a nested type in a generic base class across assembly boundary
+- Fixed: Improve the stability of NetworkObjects when a race condition occurs between despawning message and a state authority request
+- Fixed: Prefabs were not sorted with ordinal comparer
+- Fixed: Remove incorrect error log: "not implemented atm"
 
 ### Build 1844 (Mar 12, 2026)
 

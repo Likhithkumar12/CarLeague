@@ -421,7 +421,7 @@ MonoBehaviour:
       Icon: {fileID: 2800000, guid: b673d014dcd3bca4da59e060d2480014, type: 3}
       StatusIcon: {fileID: 0}
       StartPlayMode: 0
-      Url: https://doc.photonengine.com/fusion/v2/getting-started/sdk-download#release-notes
+      Url: https://doc.photonengine.com/fusion/2-shared/getting-started/sdk-download#release-notes
       Type:
         ScriptableObject: 
         Class: 
@@ -448,10 +448,18 @@ MonoBehaviour:
       Asset: {fileID: 0}
       Id: 
       StepElements: []
-    - Text: Dev Reset Playerprefs
+  - Title: Fusion Release Notes
+    Description: Fusion Release Notes
+    Icon: {fileID: 2800000, guid: 38e5aa709627a524098b436aca28c8a3, type: 3}
+    OverwritePage: Fusion Release Notes
+    PopupOncePlayerPrefsKey: 
+    Hide:
+      Value: None
+    Elements:
+    - Text: The Fusion release notes can be found inside the SDK and on our website.
       Subtext: 
       WidgetMode:
-        Value: ClearFusionPlayerPrefs
+        Value: Text
       AutoComplete:
         Value: None
       Hide:
@@ -466,6 +474,66 @@ MonoBehaviour:
         ScriptableObject: 
         Class: 
       Asset: {fileID: 0}
+      Id: 
+      StepElements: []
+    - Text: Release Notes Text File
+      Subtext: Select the Changelog text asset file in the Unity project
+      WidgetMode:
+        Value: PingAsset
+      AutoComplete:
+        Value: None
+      Hide:
+        Value: None
+      Scene: 
+      AddSceneToTop: 0
+      Icon: {fileID: 2800000, guid: 38e5aa709627a524098b436aca28c8a3, type: 3}
+      StatusIcon: {fileID: 0}
+      StartPlayMode: 0
+      Url: 
+      Type:
+        ScriptableObject: 
+        Class: 
+      Asset: {fileID: 4900000, guid: 5705adcaad7c31b439ed88af045846a1, type: 3}
+      Id: 
+      StepElements: []
+    - Text: Fusion Release Notes (Opens Web Browser)
+      Subtext: Opens the online release notes website
+      WidgetMode:
+        Value: LinkButton
+      AutoComplete:
+        Value: None
+      Hide:
+        Value: None
+      Scene: 
+      AddSceneToTop: 0
+      Icon: {fileID: 2800000, guid: b673d014dcd3bca4da59e060d2480014, type: 3}
+      StatusIcon: {fileID: 0}
+      StartPlayMode: 0
+      Url: https://doc.photonengine.com/fusion/2-shared/getting-started/sdk-download#release-notes
+      Type:
+        ScriptableObject: 
+        Class: 
+      Asset: {fileID: 0}
+      Id: 
+      StepElements: []
+    - Text: Draw Changelog
+      Subtext: 
+      WidgetMode:
+        Value: Changelog
+      AutoComplete:
+        Value: None
+      Hide:
+        Value: None
+      Scene: 
+      AddSceneToTop: 0
+      Icon: {fileID: 0}
+      StatusIcon: {fileID: 0}
+      StartPlayMode: 0
+      Url: 
+      Type:
+        ScriptableObject: 
+        Class: 
+      Asset: {fileID: 4900000, guid: 5705adcaad7c31b439ed88af045846a1, type: 3}
       Id: 
       StepElements: []
   - Title: Support

@@ -4,15 +4,10 @@
 
 // merged AssemblyAttributes
 
-#region MarkPlatformAsIL2CPPIfEnableIL2CPPDefined.cs
+#region DetectUnityDefines.cs
 
 [assembly: Fusion.MarkPlatformAsIL2CPPIfEnableIL2CPPDefined]
-
-#endregion
-
-
-#region RegisterHostProvider.cs
-
+[assembly: Fusion.MarkPlatformAsWebIfUnityWebGlDefined]
 [assembly: Fusion.MarkProfilerAsEnabledIfEnableProfilerDefinedAttribute]
 
 #endregion

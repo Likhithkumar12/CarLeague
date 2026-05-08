@@ -1958,6 +1958,10 @@ namespace Fusion.Editor {
   using HierarchyIterator = UnityEditor.HierarchyProperty;
 #endif
 
+#if UNITY_6000_4_OR_NEWER
+  using GUID = UnityEngine.GUID;
+#endif
+
   static class HierarchyIteratorExtensions {
 #if UNITY_6000_3_OR_NEWER
     public static UnityEngine.EntityId GetObjectId(this HierarchyIterator iterator) {
@@ -4831,7 +4835,14 @@ namespace Fusion.Editor {
         if (AssetDatabase.IsAssetImportWorkerProcess()) {
           FusionEditorLog.ErrorImport($"Can't update custom dependencies during Asset Import ({Name})");
         } else {
-          Update(false);
+          try {
+            Update(false);
+          } catch (UnityException) {
+            // RegisterCustomDependency is restricted during importing;
+            // defer to delayCall so it runs after the import completes.
+            EditorApplication.delayCall -= _applyHash;
+            EditorApplication.delayCall += _applyHash;
+          }
         }
       } else {
         EditorApplication.delayCall -= _applyHash;
@@ -13979,7 +13990,7 @@ namespace Fusion.Editor {
             EditorGUI.BeginChangeCheck();
             var editedAppId = EditorGUILayout.TextField("", AppId, HubSkin.textField, GUILayout.Height(StatusIconWidthDefault.y));
             if (EditorGUI.EndChangeCheck()) {
-              AppId = editedAppId;
+              AppId = editedAppId.Trim();
             }
           }
         }
@@ -14498,6 +14509,962 @@ namespace Fusion.Editor {
     }
   }
 #endif
+}
+
+#endregion
+
+
+#region Assets/Photon/Fusion/Editor/FusionPluginAssetExporter.cs
+
+﻿namespace Fusion.Editor {
+  using System;
+  using System.Collections.Generic;
+  using System.IO;
+  using System.Linq;
+  using System.Reflection;
+  using UnityEditor;
+  using UnityEditor.SceneManagement;
+  using UnityEngine;
+  using UnityEngine.SceneManagement;
+
+#if FUSION_ENABLE_ADDRESSABLES && !FUSION_DISABLE_ADDRESSABLES
+  using UnityEditor.AddressableAssets;
+#endif
+
+  using static JsonNetworkObjectDB;
+  using Object = UnityEngine.Object;
+
+  partial class FusionPluginAssetExporter {
+    
+    internal const string BakedDataPropertyName = "BakedPluginData";
+    
+    public static string GetNetworkedTypeName(Type t) {
+      return SerializableType.GetShortAssemblyQualifiedName(t);
+    }
+    
+    readonly Dictionary<Object, string> _uniqueIdCache = new();
+
+    
+
+    List<Object> _objectBuffer = new();
+    
+    public PrefabData CapturePrefab(NetworkObject prefab) {
+      Assert.Check(prefab);
+      
+      _uniqueIdCache.Clear();
+
+      var uniqueIds = GetUniqueIds(root: prefab, objects: prefab.NestedObjects);
+      
+      var prefabData = new PrefabData();
+      prefabData.UnityAssetPath      = AssetDatabaseUtils.GetAssetPathOrThrow(prefab);
+      (prefabData.UnityAssetGuid, _) = AssetDatabaseUtils.GetGUIDAndLocalFileIdentifierOrThrow(prefab);
+
+      var sourceObjects = new [] { prefab }.Concat(prefab.NestedObjects).ToList();
+      prefabData.Objects = new PrefabNetworkObjectData[sourceObjects.Count];
+
+      for (var i = 0; i < sourceObjects.Count; i++) {
+        prefabData.Objects[i] = CaptureObject<PrefabNetworkObjectData>(sourceObjects[i], uniqueIds);
+        uniqueIds             = uniqueIds.Slice(1 + sourceObjects[i].NetworkedBehaviours.Length);
+      }
+
+      Assert.Check(uniqueIds.Length == 0);
+      
+      // now resolve parents
+      foreach (var (obj, data) in sourceObjects.Zip(prefabData.Objects, (a, b) => (a, b))) {
+        data.NestedObjectCount = obj.NestedObjects.Length;
+        CaptureObjectData(data, obj);
+      }
+      
+      return prefabData;
+    }
+
+    public SceneData CaptureScene(Scene scene) {
+      Assert.Check(scene.IsValid());
+      _uniqueIdCache.Clear();
+      
+      var sceneGuid = AssetDatabaseUtils.GetAssetGuidOrThrow(scene.path);
+      
+      SceneRef sceneRef;
+      if (scene.buildIndex >= 0) {
+        sceneRef = SceneRef.FromIndex(scene.buildIndex);
+      } else {
+        var address = AssetDatabaseUtils.GetAddress(sceneGuid);
+        if (!string.IsNullOrEmpty(address)) {
+          sceneRef = SceneRef.FromPath(address);
+        } else {
+          throw new InvalidOperationException($"Could not determine the scene ref for {scene.Dump()}");
+        }
+      }
+      
+      var sceneData = new SceneData() {
+        UnityAssetGuid = sceneGuid,
+        SceneRef  = sceneRef.ToString(false, false),
+        ScenePath = scene.path,
+      };
+      
+      var sceneObjects = scene.GetComponents<NetworkObject>(true).OrderBy(x => x.SortKey).ToArray();
+      var uniqueIds = GetUniqueIds(objects: sceneObjects);
+      sceneData.Objects = new NetworkObjectData[sceneObjects.Length];
+
+      for (var i = 0; i < sceneObjects.Length; i++) {
+        sceneData.Objects[i] = CaptureObject<NetworkObjectData>(sceneObjects[i], uniqueIds);
+        uniqueIds = uniqueIds.Slice(1 + sceneObjects[i].NetworkedBehaviours.Length);
+      }
+
+      Assert.Check(uniqueIds.Length == 0);
+      
+      foreach (var (obj, data) in sceneObjects.Zip(sceneData.Objects, (a, b) => (a, b))) {
+        CaptureObjectData(data, obj);
+      }
+
+      return sceneData;
+    }
+    
+
+    public ScriptableObjectData CaptureAsset(ScriptableObject obj) {
+      _uniqueIdCache.Clear();
+
+      var data = new ScriptableObjectData() {
+        Name           = obj.name,
+        TypeName       = GetNetworkedTypeName(obj.GetType()),
+        Data           = PropertiesToJson(obj),
+        Id             = GetUniqueId(obj),
+        UnityAssetPath = AssetDatabase.GetAssetPath(obj)
+      };
+
+      (data.UnityAssetGuid, data.UnityFileId) = AssetDatabaseUtils.GetGUIDAndLocalFileIdentifierOrThrow(obj);
+      return data;
+    }
+    
+    T CaptureObject<T>(NetworkObject source, ReadOnlySpan<string> uniqueIds) where T : NetworkObjectData, new() {
+      Assert.Check(uniqueIds.Length >= 1 + source.NetworkedBehaviours.Length);
+
+      var result = new T {
+        Name     = source.name,
+        Flags    = source.Flags,
+        TypeName = GetNetworkedTypeName(source.GetType()),
+        Id       = uniqueIds[0]
+      };
+
+      for (int i = 0; i < source.NetworkedBehaviours.Length; ++i) {
+        var behaviour = source.NetworkedBehaviours[i];
+        if (behaviour == null) {
+          Debug.LogError($"Null behaviour in {source}", source);
+          result.NetworkedBehaviours.Add(new NetworkBehaviourData() {
+          });
+        } else {
+          var data = new NetworkBehaviourData() {
+            TypeName  = GetNetworkedTypeName(behaviour.GetType()),
+            WordCount = NetworkBehaviourUtils.GetWordCount(behaviour),
+            Id = uniqueIds[i + 1],
+          };
+          result.NetworkedBehaviours.Add(data);
+        }
+      }
+
+      return result;
+    }
+    
+    void CaptureObjectData(NetworkObjectData target, NetworkObject source) {
+      // also, since all the IDs are in place now, serialize behaviours
+      foreach (var (networkBehaviour, behaviourData) in source.NetworkedBehaviours.Zip(target.NetworkedBehaviours, (a, b) => (a, b))) {
+        behaviourData.Data = PropertiesToJson(networkBehaviour);
+
+        if (networkBehaviour is IPluginBakedDataProvider bakeable) {
+          var data = bakeable.Bake(default);
+          if (data != null) {
+            var json = PropertiesToJson(data);
+            Assert.Check(behaviourData.Data.EndsWith('}'));
+            behaviourData.Data = $"{behaviourData.Data[..^1]},\"{BakedDataPropertyName}\":{json}}}";
+          }
+        }
+      }
+    }
+    
+    string PropertiesToJson(object obj) {
+      return JsonUtilityExtensions.ToJsonWithTypeAnnotation(obj, (_, id) => {
+        var referencedObject = EditorUtility.InstanceIDToObject(id);
+        if (!referencedObject) {
+          return "null";
+        }
+
+        // only deal with types that can be serialized anyway
+        if (referencedObject is NetworkBehaviour || 
+            referencedObject is NetworkObject ||
+            referencedObject is ScriptableObject) {
+          return $"\"{GetUniqueId(referencedObject)}\"";  
+        }
+
+        return "null";
+      });
+    }
+
+    private ReadOnlySpan<string> GetUniqueIds(NetworkObject root = null, NetworkObject[] objects = null) {
+      List<Object> buffer = new();
+      
+      if (root) {
+        buffer.Add(root);
+        foreach (var behaviour in root.NetworkedBehaviours) {
+          buffer.Add(behaviour);
+        }
+      }
+
+      if (objects != null) {
+        foreach (var obj in objects) {
+          buffer.Add(obj);
+          foreach (var behaviour in obj.NetworkedBehaviours) {
+            buffer.Add(behaviour);
+          }
+        }
+      }
+
+      var ids = new GlobalObjectId[buffer.Count];
+      var result = new string[buffer.Count];
+      GlobalObjectId.GetGlobalObjectIdsSlow(buffer.ToArray(), ids);
+      
+      for (var i = 0; i < ids.Length; i++) {
+        var id = ids[i];
+        result[i] = $"Id-{id.identifierType}-{id.assetGUID}-{id.targetObjectId}-{id.targetPrefabId}";
+        _uniqueIdCache.TryAdd(buffer[i], result[i]);
+      }
+
+      return result;
+    }
+    
+    private string GetUniqueId(Object obj) {
+      if (_uniqueIdCache.TryGetValue(obj, out var result)) {
+        return result;
+      }
+      
+      var id = GlobalObjectId.GetGlobalObjectIdSlow(obj);
+      Assert.Check(!id.Equals(default));
+      
+      result = $"Id-{id.identifierType}-{id.assetGUID}-{id.targetObjectId}-{id.targetPrefabId}";
+      _uniqueIdCache.Add(obj, result);
+
+      return result;
+    }
+    
+  }
+}
+
+
+#endregion
+
+
+#region Assets/Photon/Fusion/Editor/FusionPluginCodeExporter.cs
+
+namespace Fusion.Editor {
+  using System;
+  using System.Collections.Generic;
+  using System.Linq;
+  using System.Reflection;
+  using System.Runtime.InteropServices;
+  using System.Text;
+  using JetBrains.Annotations;
+  using UnityEditor;
+  using UnityEngine;
+  using Color = UnityEngine.Color;
+
+  internal partial class FusionPluginCodeExporter {
+    [Flags]
+    public enum Options {
+      Default = 0,
+      AddJsonNETAttributes = 1,
+      AddDataContractAttributes = 2
+    }
+
+    readonly Options _options;
+    readonly StringBuilder _builder = new();
+
+    readonly Dictionary<Type, string> _replacements = new() {
+      { typeof(Vector2), "Fusion.Vector2" },
+      { typeof(Vector3), "Fusion.Vector3" },
+      { typeof(Vector4), "Fusion.Vector4" },
+      { typeof(Quaternion), "Fusion.Quaternion" },
+      { typeof(Color), "Fusion.Color" },
+      { typeof(Color32), "Fusion.Color32" },
+      { typeof(Vector3Int), "Fusion.Vector3Int" }
+    };
+
+    public FusionPluginCodeExporter(Options options) {
+      _options = options;
+    }
+
+    public IEnumerable<(string Name, string Contents)> Export(string targetFolder, Predicate<Assembly> assemblyFilter = null) {
+      try {
+        var types = TypeCache.GetTypesWithAttribute<NetworkBehaviourWeavedAttribute>()
+          .Concat(TypeCache.GetTypesWithAttribute<NetworkStructWeavedAttribute>())
+          .Concat(TypeCache.GetTypesWithAttribute<NetworkInputWeavedAttribute>())
+          .Concat(TypeCache.GetTypesWithAttribute<PluginCodeExportSettingsAttribute>())
+          .Concat(TypeCache.GetTypesDerivedFrom<NetworkObject>())
+          .Where(x => !x.IsDefined(typeof(WeaverGeneratedAttribute)))
+          .Where(x => !x.IsDefined(typeof(PluginCodeExportSettingsAttribute)) || (x.GetCustomAttribute<PluginCodeExportSettingsAttribute>().Options & PluginExportOptions.Export) != 0)
+          .Where(x => x.Assembly != typeof(NetworkObject).Assembly)
+          .Where(x => assemblyFilter?.Invoke(x.Assembly) ?? true)
+          .Where(x => IsTypePreserved(x))
+          .Distinct()
+          .ToList();
+
+        // first group by assembly ...
+        foreach (var assemblyGroup in types.GroupBy(x => x.Assembly).OrderBy(x => x.Key.FullName)) {
+          _builder.Clear();
+          _builder.AppendLine("// <auto-generated/>");
+          _builder.AppendLine("using System;");
+          _builder.AppendLine("using System.Runtime.InteropServices;");
+          _builder.AppendLine("using System.Runtime.Serialization;");
+          _builder.AppendLine("using Fusion.Json;");
+          BeginLineIf(Options.AddJsonNETAttributes, 0)?.AppendLine("using Newtonsoft.Json;");
+
+          // ... then by namespace ...
+          foreach (var namespaceGroup in assemblyGroup.GroupBy(x => x.Namespace)) {
+            var indent = 0;
+
+            if (!string.IsNullOrEmpty(namespaceGroup.Key)) {
+              BeginLine(indent++).AppendLine($"namespace {namespaceGroup.Key} {{");
+            }
+
+            // ... then by root declaring type
+            var rootDeclaringTypeLookup = namespaceGroup.GroupBy(x => x.GetDeclaringType(null), x => x);
+
+            foreach (var typeGroup in rootDeclaringTypeLookup) {
+              AppendWeavedOrPreservedType(typeGroup.Key, typeGroup, indent);
+            }
+
+            if (!string.IsNullOrEmpty(namespaceGroup.Key)) {
+              BeginLine(--indent).AppendLine("}");
+            }
+          }
+
+          yield return (assemblyGroup.Key.GetName().Name, _builder.ToString());
+        }
+      } finally {
+        _builder.Clear();
+      }
+    }
+
+    void AppendWeavedOrPreservedType(Type type, IEnumerable<Type> nestedTypes, int indent) {
+      if (type.IsEnum) {
+        Debug.Assert(nestedTypes.SingleOrDefault() == type);
+        AppendEnum(type, indent);
+        return;
+      }
+
+      if (type.IsDefined(typeof(NetworkBehaviourWeavedAttribute))) {
+        var needsSerializedDynamicWordCount = false;
+        var dynamicWordCountProperty = type.GetProperty(nameof(NetworkBehaviour.DynamicWordCount), BindingFlags.DeclaredOnly | BindingFlags.Public | BindingFlags.Instance);
+
+        if (dynamicWordCountProperty != null) {
+          // capture the dynamic word count if this is the first type in the hierarchy to define it
+          Debug.Assert(type.BaseType != null);
+          var baseTypeDynamicWordCountProperty = type.BaseType.GetProperty(nameof(NetworkBehaviour.DynamicWordCount));
+          Debug.Assert(baseTypeDynamicWordCountProperty != null);
+
+          if (baseTypeDynamicWordCountProperty.DeclaringType == typeof(NetworkBehaviour)) {
+            needsSerializedDynamicWordCount = true;
+          }
+        }
+
+        // full definition please
+        BeginLine(indent).AppendLine(type.GetCSharpAttributeDefinition<NetworkBehaviourWeavedAttribute>());
+        BeginLineIf(Options.AddDataContractAttributes, indent)?.AppendLine("[DataContract]");
+
+        if (needsSerializedDynamicWordCount) {
+          BeginType(type, indent++, typeof(IExportedWordCount).FullName);
+        } else {
+          BeginType(type, indent++);
+        }
+
+        // append properties
+        AppendNetworkedProperties(type, indent);
+        AppendPreservedFields(type, indent);
+        AppendRpcs(type, indent);
+
+        if (needsSerializedDynamicWordCount) {
+          AppendDynamicWordCount(type, indent);
+        }
+
+        AppendBakeables(type, indent);
+      } else if (type.IsDefined(typeof(NetworkStructWeavedAttribute))) {
+        // full struct definition
+        var wordCount = type.GetCustomAttributeOrThrow<NetworkStructWeavedAttribute>(false).WordCount;
+
+        BeginLineIf(Options.AddDataContractAttributes, indent)?.AppendLine("[DataContract]");
+        BeginLine(indent).AppendLine($"[StructLayout(LayoutKind.Explicit, Size = {wordCount * 4})]");
+        BeginLine(indent).AppendLine(type.GetCSharpAttributeDefinition<NetworkStructWeavedAttribute>());
+        BeginType(type, indent++, "Fusion.INetworkStruct");
+
+        // append properties
+        AppendNetworkStructFields(type, indent);
+        AppendNetworkedProperties(type, indent);
+        AppendPreservedFields(type, indent);
+      } else if (type.IsDefined(typeof(NetworkInputWeavedAttribute))) {
+        // full struct definition
+        var wordCount = type.GetCustomAttributeOrThrow<NetworkInputWeavedAttribute>(false).WordCount;
+
+        BeginLineIf(Options.AddDataContractAttributes, indent)?.AppendLine("[DataContract]");
+        BeginLine(indent).AppendLine($"[StructLayout(LayoutKind.Explicit, Size = {wordCount * 4})]");
+        BeginLine(indent).AppendLine(type.GetCSharpAttributeDefinition<NetworkInputWeavedAttribute>());
+        BeginType(type, indent++, "Fusion.INetworkInput");
+
+        // append properties
+        AppendNetworkStructFields(type, indent);
+        AppendNetworkedProperties(type, indent);
+        AppendPreservedFields(type, indent);
+      } else {
+        // partial definition
+        BeginType(type, indent++);
+        AppendPreservedFields(type, indent);
+      }
+
+      // now nested types please
+      foreach (var group in nestedTypes.Where(x => x != type).GroupBy(x => x.GetDeclaringType(type))) {
+        AppendWeavedOrPreservedType(group.Key, group, indent);
+      }
+
+      BeginLine(--indent).AppendLine("}");
+    }
+
+    void BeginType(Type type, int indent, params string[] interfaces) {
+      var builder = BeginLine(indent)
+        .Append(type.GetCSharpVisibility())
+        .Append(" unsafe partial ")
+        .Append(type.IsValueType ? "struct " : "class ")
+        .Append(type.GetCSharpTypeName(includeNamespace: false, includeGenerics: false))
+        .Append(type.GetCSharpTypeGenerics());
+
+      IEnumerable<string> baseTypes = interfaces;
+
+      if (IsTypePreserved(type.BaseType)) {
+        baseTypes = new[] { $"global::{type.BaseType.GetCSharpTypeName(includeNamespace: true, includeGenerics: true)}" }.Concat(interfaces);
+      }
+
+      if (baseTypes.Any()) {
+        builder.Append(" : ");
+        builder.Append(string.Join(", ", baseTypes));
+      }
+
+      builder.Append(PrefixSpace(type.GetCSharpConstraints())).AppendLine(" {");
+    }
+
+    void AppendEnum(Type type, int indent) {
+      // is this a flag enum?
+      if (type.IsDefined(typeof(FlagsAttribute))) {
+        BeginLine(indent).Append("[System.Flags]").AppendLine();
+      }
+
+      var underlyingType = type.GetEnumUnderlyingType();
+
+      BeginLine(indent++)
+        .Append("public enum ")
+        .Append(type.GetCSharpTypeName(includeNamespace: false))
+        .Append(": ")
+        .Append(underlyingType.GetCSharpTypeName())
+        .AppendLine(" {");
+
+      foreach (var value in Enum.GetValues(type)) {
+        BeginLine(indent)
+          .Append(value)
+          .Append(" = ")
+          .Append(Convert.ChangeType(value, underlyingType))
+          .AppendLine(",");
+      }
+
+      BeginLine(--indent).AppendLine("}");
+    }
+
+    void AppendPreservedFields(Type type, int indent) {
+      foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly)) {
+        PropertyInfo autoProperty = null;
+
+        if (field.IsBackingField(out var propertyName)) {
+          autoProperty = type.GetPropertyOrThrow(propertyName);
+        }
+
+        var f = field.GetCustomAttribute<PluginCodeExportSettingsAttribute>();
+        var p = autoProperty?.GetCustomAttribute<PluginCodeExportSettingsAttribute>();
+
+        if (f?.ShouldExport != true && p?.ShouldExport != true) {
+          continue;
+        }
+
+        if (field.IsDefined(typeof(SerializeField))) {
+          BeginLine(indent).AppendLine(autoProperty != null ? "[field: Fusion.SerializeField]" : "[Fusion.SerializeField]");
+        }
+
+        if (field.IsDefined(typeof(SerializeReference))) {
+          BeginLine(indent).AppendLine(autoProperty != null ? "[field: Fusion.SerializeReference]" : "[Fusion.SerializeReference]");
+        }
+
+        BeginLine(indent)
+          .Append(autoProperty?.GetCSharpVisibility() ?? field.GetCSharpVisibility())
+          .Append(" ")
+          .Append(GetExportedTypeName(field.FieldType, true))
+          .Append(" ")
+          .Append(autoProperty?.Name ?? field.Name)
+          .AppendLine(autoProperty != null ? " { get; set; }" : ";");
+      }
+    }
+
+    
+    void AppendNetworkStructFields(Type type, int indent = 0) {
+      // start with fields
+      foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)) {
+        var fieldOffsetAttribute = field.GetCustomAttributeOrThrow<FieldOffsetAttribute>(false);
+        var fieldType = field.FieldType;
+
+        PropertyInfo property = null;
+        bool isBuffer;
+        Type bufferElementType;
+        int bufferSize;
+        
+        if (field.IsDefined(typeof(WeaverGeneratedAttribute))) {
+          // this needs to be a fixed size data thing
+          var dataField = fieldType.GetFieldOrThrow("Data");
+          FusionEditorLog.Assert(dataField != null);
+          var dataFieldType = dataField.FieldType;
+          
+          isBuffer = true;
+          if (!dataFieldType.IsFixedSizeBuffer(out bufferElementType, out bufferSize)) {
+            throw new InvalidOperationException("Expected");
+          }
+
+          // going to output this a regular fixed sized buffer, but with an attribute telling it to be serialized as an object with nested Data property,
+          // just like we do in Unity
+          BeginLineIf(Options.AddJsonNETAttributes, indent)?.AppendLine($"[JsonConverter(typeof(global::Fusion.Json.NestedFixedSizeBufferConverter))]");
+          BeginLine(indent).AppendLine($"[Fusion.SerializeField]");
+          
+        } else {
+          if (field.IsBackingField(out var propertyName)) {
+            property = field.DeclaringType.GetPropertyOrThrow(propertyName);
+          }
+          isBuffer = fieldType.IsFixedSizeBuffer(out bufferElementType, out bufferSize);
+        }
+        
+        BeginLine(indent)
+          .Append(property != null ? "[field:" : "[")
+          .AppendLine($"FieldOffset({fieldOffsetAttribute.Value})]");
+
+        if (isBuffer) {
+          BeginLine(indent)
+            .Append(field.GetCSharpVisibility())
+            .Append(" fixed ")
+            .Append(GetExportedTypeName(bufferElementType))
+            .Append(" ")
+            .Append(field.Name)
+            .AppendLine($"[{bufferSize / FusionUnsafe.SizeOf(bufferElementType)}];");
+        } else {
+          BeginLine(indent)
+            .Append(property != null ? property.GetCSharpVisibility() : field.GetCSharpVisibility())
+            .Append(" ")
+            .Append(GetExportedTypeName(fieldType))
+            .Append(" ")
+            .Append(property?.Name ?? field.Name)
+            .AppendLine(property != null ? " { get; set; }" : ";");
+        }
+      }
+    }
+
+    void AppendDynamicWordCount(Type type, int indent) {
+      BeginLine(indent).AppendLine($"int {typeof(IExportedWordCount).FullName}.{nameof(IExportedWordCount.WordCount)} {{ get; set; }}");
+      BeginLine(indent).AppendLine("public override int? DynamicWordCount {");
+      BeginLine(indent).AppendLine("  get {");
+      BeginLine(indent).AppendLine($"    int result = (({typeof(IExportedWordCount).FullName})this).{nameof(IExportedWordCount.WordCount)};");
+      BeginLine(indent).AppendLine("    GetDynamicWordCountPartial(ref result);");
+      BeginLine(indent).AppendLine("    return result < 0 ? (int?)null : result;");
+      BeginLine(indent).AppendLine("  }");
+      BeginLine(indent).AppendLine("}");
+      BeginLine(indent).AppendLine("partial void GetDynamicWordCountPartial(ref int result);");
+    }
+
+    void AppendBakeables(Type type, int indent) {
+      // check for baked interface
+      var bakeableInterface = type.FindGenericInterface(typeof(IPluginBakedDataProvider<>));
+      if (bakeableInterface == null) {
+        return;
+      }
+
+      BeginLineIf(Options.AddJsonNETAttributes, indent)?.AppendLine($"[JsonProperty(\"{FusionPluginAssetExporter.BakedDataPropertyName}\")]");
+      BeginLineIf(Options.AddDataContractAttributes, indent)?.AppendLine($"[DataMember(Name = \"{FusionPluginAssetExporter.BakedDataPropertyName}\")]");
+
+      var dataType = bakeableInterface.GetGenericArguments()[0];
+      BeginLine(indent).AppendLine($"public {dataType.GetCSharpTypeName()} BakedPluginData;");
+    }
+
+    void AppendRpcs(Type type, int indent) {
+      var rpcs = type.GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+        .Select(x => (Method: x, Attribute: x.GetCustomAttribute<RpcAttribute>()))
+        .Where(x => x.Attribute != null);
+
+      foreach (var rpc in rpcs) {
+        AppendRpc(indent, rpc.Method, rpc.Attribute);
+      }
+    }
+
+    List<(ParameterInfo parameter, string type, int? size, bool isTarget)> CollectRpcArgs(MethodInfo method) {
+      return method.GetParameters()
+        .Select(p => (p, attribute: (Attribute)p.GetCustomAttribute<RpcPayloadAttribute>() ?? p.GetCustomAttribute<RpcTargetAttribute>()))
+        .Where(x => x.attribute != null)
+        .Select(x => {
+          if (x.attribute is RpcTargetAttribute) {
+            Debug.Assert(x.p.ParameterType == typeof(PlayerRef));
+            return (x.p, type: "[Fusion.RpcTarget] Fusion.PlayerRef", size: (int?)0, isTarget: true);
+          }
+
+          var attr = (RpcPayloadAttribute)x.attribute;
+          var size = attr.ByteCount > 0 ? (int?)attr.ByteCount : null;
+
+          if (x.p.ParameterType.IsArray) {
+            var elementTypeName = GetExportedTypeName(x.p.ParameterType.GetElementType());
+            return (x.p, type: $"{elementTypeName}[]", size, isTarget: false);
+          }
+
+          return (x.p, type: GetExportedTypeName(x.p.ParameterType), size, isTarget: false);
+        })
+        .ToList();
+    }
+
+    void AppendRpc(int indent, MethodInfo method, RpcAttribute attribute) {
+      BeginLine(indent).AppendLine(method.GetCSharpAttributeDefinition<RpcAttribute>());
+
+      var args = CollectRpcArgs(method);
+      var hasInfoArgument = args.Any(x => x.parameter.Name == "info");
+      var argsSeparator = args.Count > 0 ? ", " : "";
+
+      // arguments
+      BeginLine(indent++)
+        .Append($"Fusion.RpcInvokeInfo {method.Name}(")
+        .AppendJoin(", ", args.Select(x => $"{x.type} {x.parameter.Name}"))
+        .AppendLine(") {");
+
+      BeginLine(indent).AppendLine("var __payloadSize = 0;");
+      var targetArg = "Fusion.PlayerRef.Invalid";
+      foreach (var (p, _, size, isTarget) in args) {
+        if (isTarget) {
+          targetArg = p.Name;
+        } else if (size == null) {
+          BeginLine(indent).AppendLine($"__payloadSize += Fusion.RpcDataWriter.GetPayloadSize({p.Name});");
+        } else if (p.ParameterType.IsArray) {
+          BeginLine(indent).AppendLine($"__payloadSize += Fusion.RpcDataWriter.GetBytePayloadSize({p.Name}.Length, {size});");
+        } else {
+          BeginLine(indent).AppendLine($"__payloadSize += Fusion.RpcDataWriter.GetBytePayloadSize({size});");
+        }
+      }
+
+      BeginLine(indent).AppendLine($"using var __rpc = this.Runner.CreateRpcBuilder({attribute.Key}, __payloadSize, {(method.IsStatic ? "null" : "this")}, {targetArg});");
+      BeginLine(indent).AppendLine("var __result = __rpc.Prepare(out var __writer);");
+      BeginLine(indent++).AppendLine("if (__result.SendMessageResult == Fusion.RpcSendMessageResult.Sent) {");
+      foreach (var (p, _, size, isTarget) in args) {
+        if (isTarget) {
+          continue;
+        }
+
+        BeginLine(indent).AppendLine(size == null
+          ? $"__writer.Write({p.Name});"
+          : $"__writer.Write({p.Name}, {size});");
+      }
+
+      BeginLine(indent).AppendLine("__rpc.Send();");
+      BeginLine(--indent).AppendLine("}");
+      BeginLine(indent).AppendLine("return __result;");
+      BeginLine(--indent).AppendLine("}");
+
+      AppendRpcPartialAndInvoker(indent, method, attribute, args, argsSeparator, hasInfoArgument);
+    }
+
+    void AppendRpcPartialAndInvoker(
+      int indent, MethodInfo method, RpcAttribute attribute,
+      List<(ParameterInfo parameter, string type, int? size, bool isTarget)> args,
+      string argsSeparator, bool hasInfoArgument) {
+      var expectExistingHandler = method.GetCustomAttribute<PluginCodeExportSettingsAttribute>()?.ShouldExport == true;
+
+      // generate partial method only if RPC is not preserved
+      if (!expectExistingHandler) {
+        BeginLine(indent).AppendLine($"[Fusion.NetworkRpcPartialInvoker({attribute.Key})]");
+        BeginLine(indent)
+          .Append($"partial void {method.Name}(")
+          .AppendJoin(", ", args.Select(x => $"{x.type} {x.parameter.Name}"))
+          .Append(argsSeparator)
+          .Append("ref Fusion.RpcInfo ")
+          .Append(hasInfoArgument ? "__info" : "info")
+          .AppendLine(");");
+      }
+
+      // find invoker
+      var invokerMethod = method.DeclaringType.GetMethodOrThrow($"{method.Name}@Invoker{attribute.Key}", BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.Static);
+      var weavedInvokerAttribute = invokerMethod.GetCustomAttributeOrThrow<NetworkRpcWeavedInvokerAttribute>(false);
+
+      BeginLine(indent)
+        .Append("[Fusion.NetworkRpcWeavedInvokerAttribute(")
+        .Append(weavedInvokerAttribute.Key)
+        .Append(expectExistingHandler ? "" : $", {nameof(NetworkRpcWeavedInvokerAttribute.HasPartialInvoker)} = true")
+        .AppendLine(")]");
+      BeginLine(indent)
+        .AppendLine("[System.Obsolete(\"This method is generated by Fusion and should not be called directly.\")]");
+
+      BeginLine(indent++)
+        .AppendLine($"static void {invokerMethod.Name.Replace('@', '_')}(in Fusion.RpcInvokeContext __context) {{");
+
+      BeginLine(indent).AppendLine("var __reader = __context.PayloadReader;");
+      foreach (var (p, type, size, isTarget) in args) {
+        if (isTarget) {
+          BeginLine(indent).AppendLine($"var {p.Name} = __context.TargetPlayer;");
+        } else if (size == null) {
+          BeginLine(indent).AppendLine($"__reader.Read(out {type} {p.Name});");
+        } else {
+          BeginLine(indent).AppendLine($"__reader.Read(out {type} {p.Name}, {size});");
+        }
+      }
+
+      BeginLine(indent).AppendLine($"var __info = Fusion.RpcInfo.FromRemote(__context, default, Fusion.RpcChannel.{attribute.Channel});");
+
+      BeginLine(indent)
+        .Append(method.IsStatic ? "" : $"(({method.DeclaringType.GetCSharpTypeName(includeNamespace: false)})__context.TargetBehaviour).")
+        .Append($"{method.Name}(")
+        .Append(method.IsStatic ? "__context.Runner" + argsSeparator : "")
+        .AppendJoin(", ", args.Select(x => x.parameter.Name))
+        .Append(argsSeparator)
+        .Append(expectExistingHandler ? "" : "ref ")
+        .Append("__info")
+        .AppendLine(");");
+
+      BeginLine(--indent).AppendLine("}");
+    }
+
+    void AppendNetworkedProperties(Type type, int indent) {
+      // a dictionary of default values
+      var fields = type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)
+        .SelectMany(field => field.GetCustomAttributes<DefaultForPropertyAttribute>().Select(attribute => new { field.Name, attribute.PropertyName }))
+        .ToDictionary(x => x.PropertyName, x => x.Name);
+
+      foreach (var prop in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly)) {
+        var attr = prop.GetCustomAttribute<NetworkedWeavedAttribute>();
+
+        if (attr == null) {
+          continue;
+        }
+
+        try {
+          fields.TryGetValue(prop.Name, out var defaultFieldName);
+          AppendNetworkedProperty(indent, prop, attr.WordOffset, attr.WordCount, defaultFieldName);
+        } catch (Exception ex) {
+          Debug.LogError($"Failed to append property {prop.Name} in type {type.Name}: {ex}");
+        }
+      }
+    }
+
+    (string typeName, string read, string write, string attributes, string extraField)
+      ResolveNetworkedPropertyType(PropertyInfo prop, int wordOffset, int wordCount) {
+      var propertyType = prop.PropertyType;
+      var genericDef = propertyType.IsGenericType ? propertyType.GetGenericTypeDefinition() : null;
+
+      string GetSpan() {
+        return prop.DeclaringType.IsValueType
+          ? $"MemoryMarshal.CreateSpan<int>(ref _{prop.Name}[0], {wordCount})"
+          : $"Ptr.Slice({wordOffset}, {wordCount}).AsSpan()";
+      }
+
+      string GetReaderWriterType(string elementType, int? elementWordCount) {
+        return elementType switch {
+          "string" => $"Fusion.ElementReaderWriterString<{MetaConstant.Get(elementWordCount.Value - 1).GetCSharpTypeName()}>",
+          _ => $"Fusion.ElementReaderWriterUnmanaged<{elementType}, {MetaConstant.Get(elementWordCount.Value).GetCSharpTypeName()}>"
+        };
+      }
+
+      if (propertyType.IsByRef || propertyType.IsPointer) {
+        if (prop.DeclaringType.IsValueType) {
+          throw new NotSupportedException();
+        }
+
+        var refTypeName = GetExportedTypeName(propertyType.GetElementType());
+        return (refTypeName,
+          $"return ref this.ReinterpretState<{refTypeName}>({wordOffset});",
+          null, null, null);
+      }
+
+      if (genericDef == typeof(NetworkArray<>)) {
+        var elementType = GetExportedTypeName(propertyType.GetGenericArguments()[0]);
+        var attr = prop.GetCustomAttributeOrThrow<NetworkedWeavedArrayAttribute>(false);
+        var rw = GetReaderWriterType(elementType, attr.ElementWordCount);
+        return (
+          $"Fusion.NetworkArray<{elementType}>",
+          $"return new (MemoryMarshal.AsBytes({GetSpan()}), {attr.Capacity}, {rw}.GetInstance());",
+          null,
+          $"[Fusion.NetworkedWeavedArrayAttribute({attr.Capacity}, {attr.ElementWordCount}, typeof({rw}))]",
+          null);
+      }
+
+      if (genericDef == typeof(NetworkLinkedList<>)) {
+        var elementType = GetExportedTypeName(propertyType.GetGenericArguments()[0]);
+        var attr = prop.GetCustomAttributeOrThrow<NetworkedWeavedLinkedListAttribute>(false);
+        var rw = GetReaderWriterType(elementType, attr.ElementWordCount);
+        return (
+          $"Fusion.NetworkLinkedList<{elementType}>",
+          $"return new ({GetSpan()}, {attr.Capacity}, {rw}.GetInstance());",
+          null,
+          $"[Fusion.NetworkedWeavedLinkedListAttribute({attr.Capacity}, {attr.ElementWordCount}, typeof({rw}))]",
+          null);
+      }
+
+      if (genericDef == typeof(NetworkDictionary<,>)) {
+        var keyType = GetExportedTypeName(propertyType.GetGenericArguments()[0]);
+        var valueType = GetExportedTypeName(propertyType.GetGenericArguments()[1]);
+        var attr = prop.GetCustomAttributeOrThrow<NetworkedWeavedDictionaryAttribute>(false);
+        var keyRw = GetReaderWriterType(keyType, attr.KeyWordCount);
+        var valueRw = GetReaderWriterType(valueType, attr.ValueWordCount);
+        return (
+          $"Fusion.NetworkDictionary<{keyType}, {valueType}>",
+          $"return new ({GetSpan()}, {attr.Capacity}, {keyRw}.GetInstance(), {valueRw}.GetInstance());",
+          null,
+          $"[Fusion.NetworkedWeavedDictionaryAttribute({attr.Capacity}, {attr.KeyWordCount}, {attr.ValueWordCount}, typeof({keyRw}), typeof({valueRw}))]",
+          null);
+      }
+
+      if (propertyType == typeof(string)) {
+        var stringAttr = prop.GetCustomAttributeOrThrow<NetworkedWeavedStringAttribute>(false);
+        var attributes = $"[Fusion.NetworkedWeavedStringAttribute({stringAttr.Capacity}, {(stringAttr.CacheFieldName != null ? $"\"{stringAttr.CacheFieldName}\"" : "null")})]";
+
+        if (string.IsNullOrEmpty(stringAttr.CacheFieldName)) {
+          return (
+            "string",
+            $"Fusion.ReadWriteUtilsForWeaver.ReadStringUtf32NoHash({GetSpan()}, out var result); return result;",
+            $"Fusion.ReadWriteUtilsForWeaver.WriteStringUtf32NoHash({GetSpan()}, value);",
+            attributes,
+            null);
+        }
+
+        return (
+          "string",
+          $"Fusion.ReadWriteUtilsForWeaver.ReadStringUtf32WithHash({GetSpan()}, ref {stringAttr.CacheFieldName}); return {stringAttr.CacheFieldName};",
+          $"Fusion.ReadWriteUtilsForWeaver.WriteStringUtf32WithHash({GetSpan()}, value, ref {stringAttr.CacheFieldName});",
+          attributes,
+          $"private string {stringAttr.CacheFieldName};");
+      }
+
+      var defaultTypeName = GetExportedTypeName(propertyType);
+      if (prop.DeclaringType.IsValueType) {
+        return (defaultTypeName,
+          $"return global::Fusion.FusionUnsafe.ReinterpretWords<{defaultTypeName}>({GetSpan()});",
+          $"global::Fusion.FusionUnsafe.ReinterpretWords<{defaultTypeName}>({GetSpan()}) = value;",
+          null, null);
+      }
+
+      return (defaultTypeName,
+        $"return this.ReinterpretState<{defaultTypeName}>({wordOffset});",
+        $"this.ReinterpretState<{defaultTypeName}>({wordOffset}) = value;",
+        null, null);
+    }
+
+    void AppendNetworkedProperty(int indent, PropertyInfo prop, int wordOffset, int wordCount, string dataMemberName) {
+      Debug.Assert(prop != null);
+      Debug.Assert(prop.DeclaringType != null);
+
+      var (typeName, read, write, additionalAttributes, extraField) = ResolveNetworkedPropertyType(prop, wordOffset, wordCount);
+
+      if (extraField != null) {
+        BeginLine(indent).AppendLine(extraField);
+      }
+
+      var isStruct = prop.DeclaringType.IsValueType;
+      var isRef = prop.PropertyType.IsByRef || prop.PropertyType.IsPointer;
+
+      if (!isStruct) {
+        BeginLineIf(Options.AddJsonNETAttributes, indent)?.AppendLine(string.IsNullOrEmpty(dataMemberName) ? "[JsonProperty]" : $"[JsonProperty(\"{dataMemberName}\")]");
+        BeginLineIf(Options.AddDataContractAttributes, indent)?.AppendLine(string.IsNullOrEmpty(dataMemberName) ? "[DataMember]" : $"[DataMember(Name = \"{dataMemberName}\")]");
+      }
+
+      BeginLine(indent).AppendLine(prop.GetCSharpAttributeDefinition<NetworkedAttribute>());
+      BeginLine(indent).AppendLine(prop.GetCSharpAttributeDefinition<NetworkedWeavedAttribute>());
+      BeginLineIf(additionalAttributes != null, indent)?.AppendLine(additionalAttributes);
+      BeginLine(indent++)
+        .Append(prop.GetCSharpVisibility())
+        .Append(isRef ? " ref " : " ")
+        .Append(typeName)
+        .Append(" ")
+        .Append(prop.Name).AppendLine(" {");
+
+      BeginLine(indent)
+        .Append("get { ")
+        .Append(read)
+        .AppendLine(" }");
+
+      if (prop.SetMethod != null) {
+        Debug.Assert(!isRef);
+        Debug.Assert(write != null);
+        BeginLine(indent)
+          .Append(prop.SetMethod.GetCSharpVisibility() != prop.GetCSharpVisibility() ? $"{prop.SetMethod.GetCSharpVisibility()} " : "")
+          .Append("set { ")
+          .Append(write)
+          .AppendLine(" }");
+      }
+
+      BeginLine(--indent).AppendLine("}");
+    }
+
+    protected virtual string GetExportedTypeName(Type type, bool preserveType = false) {
+      // explicit replacement
+      if (_replacements.TryGetValue(type, out var replacement)) {
+        return replacement;
+      }
+
+      if (preserveType) {
+        return type.GetCSharpTypeName();
+      }
+
+      if (type == typeof(bool)) {
+        return typeof(NetworkBool).FullName;
+      }
+
+      // find wrap method
+      var wrapMethod = type.GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.FlattenHierarchy)
+        .SingleOrDefault(x => x.IsDefined(typeof(NetworkSerializeMethodAttribute)));
+
+      if (wrapMethod != null) {
+        // skip the wrapping entirely
+        return GetExportedTypeName(wrapMethod.ReturnType);
+      }
+
+      // regular type
+      return type.GetCSharpTypeName();
+    }
+
+    protected virtual bool IsTypePreserved(Type type) {
+      if (type.IsDefined(typeof(WeaverGeneratedAttribute))) {
+        return false;
+      }
+
+      if (type.Assembly == typeof(NetworkObject).Assembly) {
+        return true;
+      }
+
+      if (type.IsSubclassOf(typeof(NetworkObject))) {
+        return true;
+      }
+
+      return type.IsDefined(typeof(NetworkBehaviourWeavedAttribute))
+             || type.IsDefined(typeof(NetworkInputWeavedAttribute))
+             || type.IsDefined(typeof(NetworkStructWeavedAttribute))
+             || type.GetCustomAttribute<PluginCodeExportSettingsAttribute>()?.ShouldExport == true;
+    }
+
+    string PrefixSpace(string str) {
+      return string.IsNullOrEmpty(str) ? "" : " " + str;
+    }
+
+    StringBuilder BeginLine(int indent) {
+      return _builder.Append(' ', indent * 2);
+    }
+
+    [CanBeNull]
+    StringBuilder BeginLineIf(Options option, int indent) {
+      return (_options & option) == option ? _builder.Append(' ', indent * 2) : null;
+    }
+
+    [CanBeNull]
+    StringBuilder BeginLineIf(bool flag, int indent) {
+      return flag ? _builder.Append(' ', indent * 2) : null;
+    }
+  }
 }
 
 #endregion
@@ -16114,10 +17081,30 @@ namespace Fusion.Editor {
 
   [CustomEditor(typeof(PhotonAppSettings))]
   public class PhotonAppSettingsEditor : Editor {
+    private const string AppIdPropertyPath = "AppSettings.AppIdFusion";
+
 
     public override void OnInspectorGUI() {
       FusionEditorGUI.InjectScriptHeaderDrawer(serializedObject);
+      
+      serializedObject.Update();
+      EditorGUI.BeginChangeCheck();
       base.DrawDefaultInspector();
+
+      // return if no changes were detected
+      if (!EditorGUI.EndChangeCheck()) {
+        return;
+      }
+      
+      var appID = serializedObject.FindProperty(AppIdPropertyPath);
+      if (appID != null && string.IsNullOrEmpty(appID.stringValue) == false) {
+        // trim app id to avoid accidental empty spaces at both ends.
+        var trimmedAppId = appID.stringValue.Trim();
+        if (appID.stringValue != trimmedAppId) {
+          appID.stringValue = trimmedAppId;
+          serializedObject.ApplyModifiedProperties();
+        }
+      }
     }
 
     [MenuItem("Tools/Fusion/Realtime Settings", priority = 200)]

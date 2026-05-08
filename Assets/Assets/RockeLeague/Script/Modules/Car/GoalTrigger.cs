@@ -1,13 +1,6 @@
 using System.Collections;
 using UnityEngine;
 
-/// <summary>
-/// Attach to RedGoal and BlueGoal trigger colliders.
-/// 
-/// Inspector setup per goal object:
-///   RedGoal  → scoringTeamName = "Blue"  (ball in red goal = blue scores)
-///   BlueGoal → scoringTeamName = "Red"
-/// </summary>
 public class GoalTrigger : MonoBehaviour
 {
     [Tooltip("Name of the team that scores when ball enters THIS goal.")]

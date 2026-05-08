@@ -7,43 +7,78 @@ public class CameraManager : MonoBehaviour
 
     [SerializeField] private CinemachineCamera cinemachineCamera;
 
-    private Transform cameraTarget;
-    private Rigidbody targetRb;
+      Transform cameraTarget;
     private CarController targetCar;
     private float storedYRotation;
     private bool initialized;
 
     void Awake()
     {
+        // Singleton protection
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
         Instance = this;
+
+
         cameraTarget = new GameObject("CameraFollowTarget").transform;
-        cinemachineCamera.Follow = cameraTarget;
-        cinemachineCamera.LookAt = cameraTarget;
+    }
+
+    void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
     }
 
     public void AssignToLocalCar(CarController car)
     {
+        if (car == null)
+        {
+            Debug.LogError("[CameraManager] AssignToLocalCar called with null car!");
+            return;
+        }
+
         targetCar = car;
-        targetRb = car.GetComponent<Rigidbody>();
+
+       
         storedYRotation = car.transform.eulerAngles.y;
-        cameraTarget.position = targetRb.position;
+        cameraTarget.position = car.transform.position;
         cameraTarget.rotation = Quaternion.Euler(0, storedYRotation, 0);
+
+        
+        cinemachineCamera.Follow = cameraTarget;
+        cinemachineCamera.LookAt = cameraTarget;
+
         initialized = true;
-        Debug.Log("[CameraManager] Following: " + car.gameObject.name);
+        Debug.Log($"[CameraManager] Following: {car.gameObject.name} | Y: {storedYRotation}");
     }
 
-    void FixedUpdate()
+    void LateUpdate()
     {
-        if (!initialized || targetRb == null) return;
+      
+        if (!initialized || targetCar == null) return;
 
-        cameraTarget.position = targetRb.position;
+        
+        cameraTarget.position = targetCar.transform.position;
 
-        if (targetCar.IsGrounded())
+       
+        if (targetCar.IsGrounded() || targetCar.IsOnSurface())
         {
+         
             storedYRotation = Mathf.LerpAngle(
                 storedYRotation,
                 targetCar.transform.eulerAngles.y,
                 Time.deltaTime * 5f
+            );
+        }
+        else
+        {
+          
+            storedYRotation = Mathf.LerpAngle(
+                storedYRotation,
+                targetCar.transform.eulerAngles.y,
+                Time.deltaTime * 0.5f
             );
         }
 

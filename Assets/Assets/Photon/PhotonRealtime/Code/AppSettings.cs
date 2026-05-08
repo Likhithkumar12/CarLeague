@@ -10,6 +10,7 @@
 #define SUPPORTED_UNITY
 #endif
 
+
 namespace Photon.Realtime
 {
     using System;
@@ -229,42 +230,42 @@ namespace Photon.Realtime
         /// <summary>ToString but with more details.</summary>
         public string ToStringFull()
         {
-          var sb = new StringBuilder();
+            var sb = new StringBuilder();
 
-          sb.Append("AppId ");
+            sb.Append("AppId ");
 
-          var appIds = new List<string>();
+            var appIds = new List<string>();
 
-          AppendAppIdIfNotEmpty(appIds, "Realtime/PUN", AppIdRealtime);
-          AppendAppIdIfNotEmpty(appIds, "Fusion", AppIdFusion);
-          AppendAppIdIfNotEmpty(appIds, "Quantum", AppIdQuantum);
-          AppendAppIdIfNotEmpty(appIds, "Chat", AppIdChat);
-          AppendAppIdIfNotEmpty(appIds, "Voice", AppIdVoice);
+            AppendAppIdIfNotEmpty(appIds, "Realtime/PUN", AppIdRealtime);
+            AppendAppIdIfNotEmpty(appIds, "Fusion", AppIdFusion);
+            AppendAppIdIfNotEmpty(appIds, "Quantum", AppIdQuantum);
+            AppendAppIdIfNotEmpty(appIds, "Chat", AppIdChat);
+            AppendAppIdIfNotEmpty(appIds, "Voice", AppIdVoice);
 
-          sb.Append(string.Join(", ", appIds));
+            sb.Append(string.Join(", ", appIds));
 
-          sb.Append($", NameServer: {UseNameServer}");
-          sb.Append($", Region: {FixedRegion}");
-          sb.Append($", AppVersion: {AppVersion}");
-          sb.Append($", Server: {Server}");
-          sb.Append($", Port: {Port}");
-          sb.Append($", Proxy: {ProxyServer}");
-          sb.Append($", AuthMode: {AuthMode}");
-          sb.Append($", Protocol: {Protocol}");
-          sb.Append($", Enable Protocol Fallback: {EnableProtocolFallback}");
-          sb.Append($", Lobby Statistics: {EnableLobbyStatistics}");
-          sb.Append($", Network Logging: {NetworkLogging}");
-          sb.Append($", Client Logging: {ClientLogging}");
+            sb.Append($", NameServer: {UseNameServer}");
+            sb.Append($", Region: {FixedRegion}");
+            sb.Append($", AppVersion: {AppVersion}");
+            sb.Append($", Server: {Server}");
+            sb.Append($", Port: {Port}");
+            sb.Append($", Proxy: {ProxyServer}");
+            sb.Append($", AuthMode: {AuthMode}");
+            sb.Append($", Protocol: {Protocol}");
+            sb.Append($", Enable Protocol Fallback: {EnableProtocolFallback}");
+            sb.Append($", Lobby Statistics: {EnableLobbyStatistics}");
+            sb.Append($", Network Logging: {NetworkLogging}");
+            sb.Append($", Client Logging: {ClientLogging}");
 
-          return sb.ToString();
+            return sb.ToString();
 
-          void AppendAppIdIfNotEmpty(List<string> list, string label, string value) 
-          {
-            if (!string.IsNullOrEmpty(value))
+            void AppendAppIdIfNotEmpty(List<string> list, string label, string value)
             {
-              list.Add($"{label}: {HideAppId(value)}");
+                if (!string.IsNullOrEmpty(value))
+                {
+                    list.Add($"{label}: {HideAppId(value)}");
+                }
             }
-          }
         }
 
         /// <summary>Checks if a string is a Guid by attempting to create one.</summary>

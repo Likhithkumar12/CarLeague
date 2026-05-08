@@ -1995,6 +1995,73 @@ namespace Fusion.CodeGen {
 
   unsafe partial class ILWeaver {
 
+    // when walking base types through a GenericInstanceType (e.g. Base<int>), property types
+    // from the open definition may reference the generic context (nested types, generic params).
+    // Cecil can't import these across modules without a concrete context, so we resolve them here.
+    static TypeReference SubstituteGenericParameter(GenericParameter gp, GenericInstanceType context) {
+      if (gp.Type != GenericParameterType.Type) {
+        return gp;
+      }
+      var contextDef = context.Resolve();
+      if (gp.DeclaringType.Resolve() != contextDef) {
+        return gp;
+      }
+      return context.GenericArguments[gp.Position];
+    }
+
+    internal static TypeReference ResolveGenericTypeRef(TypeReference typeRef, GenericInstanceType context) {
+      if (typeRef is GenericParameter gp) {
+        return SubstituteGenericParameter(gp, context);
+      }
+
+      if (typeRef.DeclaringType != null && typeRef.DeclaringType.HasGenericParameters &&
+          typeRef.DeclaringType.Resolve() == context.Resolve()) {
+        return new TypeReference(typeRef.Namespace, typeRef.Name, typeRef.Module, typeRef.Scope) {
+          DeclaringType = context,
+          IsValueType = typeRef.IsValueType
+        };
+      }
+
+      if (typeRef is GenericInstanceType git) {
+        bool needsResolve = false;
+        foreach (var arg in git.GenericArguments) {
+          if (arg is GenericParameter) {
+            needsResolve = true;
+            break;
+          }
+        }
+
+        if (needsResolve) {
+          var resolved = new GenericInstanceType(git.ElementType);
+          foreach (var arg in git.GenericArguments) {
+            resolved.GenericArguments.Add(arg is GenericParameter gp2
+              ? SubstituteGenericParameter(gp2, context)
+              : arg);
+          }
+          return resolved;
+        }
+      }
+
+      return typeRef;
+    }
+
+    // resolves the base type through a generic context, e.g. if typeDef is B<U> : A<U>
+    // and type is B<int>, returns A<int> instead of the raw A<U>.
+    static TypeReference ResolveBaseType(TypeReference type, TypeDefinition typeDef) {
+      var baseType = typeDef.BaseType;
+      if (baseType == null || !(type is GenericInstanceType git) || !(baseType is GenericInstanceType baseGit)) {
+        return baseType;
+      }
+
+      var resolved = new GenericInstanceType(baseGit.ElementType);
+      foreach (var arg in baseGit.GenericArguments) {
+        resolved.GenericArguments.Add(arg is GenericParameter gp
+          ? SubstituteGenericParameter(gp, git)
+          : arg);
+      }
+      return resolved;
+    }
+
     FieldDefinition AddNetworkBehaviourBackingField(PropertyDefinition property) {
 
       var fieldType = TypeRegistry.GetInfo(property.PropertyType).GetUnityBackingFieldType(true);
@@ -2102,31 +2169,16 @@ namespace Fusion.CodeGen {
     
     public int GetBehaviourWordCount(ILWeaverAssembly asm, TypeReference type) {
       int wordCount = 0;
-      var outerType = type;
-      
+
       while (!type.IsSame<NetworkBehaviour>()) {
 
         var typeDef = type.Resolve();
-        
+
         if (typeDef.TryGetAttribute<NetworkBehaviourWeavedAttribute>(out var weavedAttribute)) {
           var result = weavedAttribute.GetAttributeArgument<int>(0);
           if (result > 0) {
             wordCount += result;
-          } 
-          
-          // else if (TryGetNetworkBehaviourTGenericArgument(asm, outerType, out var genericArgument)) {
-          //   if (genericArgument is GenericParameter) {
-          //     Log.Assert(wordCount == 0);
-          //     return -1;
-          //   } else {
-          //     var genericTypeDef = genericArgument.Resolve();
-          //     if (genericTypeDef == null) {
-          //       throw new ILWeaverException($"Failed to resolve generic argument {genericArgument} of {outerType}");
-          //     }
-          //   
-          //     wordCount += TypeRegistry.GetTypeWordCount(genericTypeDef);
-          //   }
-          // }
+          }
           break;
         }
 
@@ -2135,10 +2187,10 @@ namespace Fusion.CodeGen {
             continue;
           }
 
-          wordCount += TypeRegistry.GetPropertyWordCount(property);
+          wordCount += TypeRegistry.GetPropertyWordCount(property, type);
         }
 
-        type = typeDef.BaseType;
+        type = ResolveBaseType(type, typeDef);
       }
 
       return wordCount;
@@ -6862,7 +6914,13 @@ namespace Fusion.CodeGen {
     }
 
     public int GetTypeWordCount(TypeReference type) => GetInfo(type).StaticWordCount;
-    public int GetPropertyWordCount(PropertyDefinition property) => GetMemberWordCount(property.PropertyType, property, property.DeclaringType);
+    public int GetPropertyWordCount(PropertyDefinition property, TypeReference context = null) {
+      var propType = property.PropertyType;
+      if (context is GenericInstanceType git) {
+        propType = ILWeaver.ResolveGenericTypeRef(propType, git);
+      }
+      return GetMemberWordCount(propType, property, property.DeclaringType);
+    }
     public int GetMemberWordCount(TypeReference type, ICustomAttributeProvider member, TypeReference declaringType) => GetInfo(type).GetMemberWordCount(member, declaringType);
     public int GetMemberByteCount(TypeReference type, ICustomAttributeProvider member, TypeReference declaringType) => GetInfo(type).GetMemberByteCount(member, declaringType);
 

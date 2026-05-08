@@ -700,6 +700,52 @@
             <param name="invertY">Invert Y handling</param>
             <param name="aspectRatio">Expressed as Width/Height, this defines the ratio of the box shown in the inspector. Value of 0 indicates game window resolution will be used.</param>
         </member>
+        <member name="T:Fusion.PluginExportOptions">
+            <summary>
+            Controls how a type should be exported for the plugin
+            </summary>
+        </member>
+        <member name="F:Fusion.PluginExportOptions.Skip">
+            <summary>
+            The type will be skipped. No code will be generated.
+            
+            Can be applied to <see cref="T:Fusion.NetworkObject"/>'s <see cref="T:Fusion.NetworkBehaviour"/>'s
+            and <see cref="T:Fusion.INetworkStruct"/> to stop them being automatically exported to the plugin
+            </summary>
+        </member>
+        <member name="F:Fusion.PluginExportOptions.Export">
+            <summary>
+            The type will be exported to the plugin. 
+            </summary>
+        </member>
+        <member name="T:Fusion.PluginCodeExportSettingsAttribute">
+            <summary>
+            Use this attribute to control how the attributed code will be exported for use in the plugin.
+            
+            Typical behaviour for the exporter is to export all <see cref="T:Fusion.NetworkObject"/>'s <see cref="T:Fusion.NetworkBehaviour"/>'s
+            and <see cref="T:Fusion.INetworkStruct"/>'s. if however this is not desired you can add this attribute with the 
+            <see cref="F:Fusion.PluginExportOptions.Skip"/> option to skip it from the export.
+            
+            This attribute can also be added to your own types with the <see cref="F:Fusion.PluginExportOptions.Export"/> option
+            to include those types in the export.
+            </summary>
+        </member>
+        <member name="P:Fusion.PluginCodeExportSettingsAttribute.Options">
+            <summary>
+            The options to use when attempting export the attributed type
+            </summary>
+        </member>
+        <member name="P:Fusion.PluginCodeExportSettingsAttribute.ShouldExport">
+            <summary>
+            Checks if the <see cref="F:Fusion.PluginExportOptions.Export"/> option has been set.
+            </summary>
+        </member>
+        <member name="M:Fusion.PluginCodeExportSettingsAttribute.#ctor(Fusion.PluginExportOptions)">
+            <summary>
+            Configurable constructor.
+            </summary>
+            <param name="options">The export configuration.</param>
+        </member>
         <member name="T:Fusion.RenderAttribute">
             <summary>
             Override default render settings for <c>[Networked]</c> properties.
@@ -3771,6 +3817,9 @@
             <param name="networkTransform">The network transform we are appplying a correction to</param>
             <param name="physicsDt">The rate physics in running at in seconds</param>
             <param name="physicsBody">The physics body</param>
+            <param name="ticksToExtrapolate">How many ticks forward to extrapolate. The time to extrapolate forward should 
+            be calculated by <c>ticksToExtrapolate * networkTransform.Runner.DeltaTime</c>. Note this is clamped by 
+            <see cref="F:Fusion.PhysicsSettings.MaxExtrapolationTime"/>, in ticks</param>
             <param name="localSnapshot">State of the local physics body</param>
             <param name="remoteSnapshot">State of the remote physics body</param>
             <param name="extrapolatedSnapshot">This delegate should create the extrapolation here</param>
@@ -3896,6 +3945,13 @@
             Detect the current error and determine if the physics body should be corrected along with deciding if a immediate move to remote position is required.
             </summary>
             <returns> (bool, bool) Correction Needed?, Immediate move to remote required?</returns>
+        </member>
+        <member name="M:Fusion.NetworkTransform.ComputeTicksToExtrapolate">
+            <summary>
+            Use LastReceiveTick to compute tick difference.
+            
+            Clamps to the tick equivalent of <see cref="F:Fusion.PhysicsSettings.MaxExtrapolationTime"/>
+            </summary>
         </member>
         <member name="F:Fusion.NetworkTransform.CurrentTrace">
             <summary>
@@ -4608,9 +4664,10 @@
             <param name="extrapolatedSnapshot">The extrapolated physics snapshot for this FixedUpdate</param>
             <returns></returns>
         </member>
-        <member name="M:Fusion.NetworkTransformHelpers.ComputeExtrapolatedSnapshot(Fusion.NetworkTransform,System.Single,Fusion.AbstractPhysicsBody,Fusion.KinematicSnapshot@,Fusion.KinematicSnapshot@,Fusion.KinematicSnapshot@)">
+        <member name="M:Fusion.NetworkTransformHelpers.ComputeExtrapolatedSnapshot(Fusion.NetworkTransform,System.Single,Fusion.AbstractPhysicsBody,System.Single,Fusion.KinematicSnapshot@,Fusion.KinematicSnapshot@,Fusion.KinematicSnapshot@)">
             <summary>
-            Use remote physics data to extrapolate the physics body.
+            Extrapolate with an explicit <c>ticksToExtrapolate</c> value. The passed <c>ticksToExtrapolate</c> is normally 
+            clamped to <see cref="F:Fusion.PhysicsSettings.MaxExtrapolationTime"/> in ticks.
             </summary>
         </member>
         <member name="M:Fusion.NetworkTransformHelpers.ApplyCorrection(Fusion.NetworkTransform,System.Single,System.Single,Fusion.AbstractPhysicsBody,System.Single,Fusion.KinematicSnapshot@,Fusion.KinematicSnapshot@,Fusion.KinematicSnapshot@)">
@@ -7750,6 +7807,15 @@
         <member name="M:Fusion.ElementReaderWriterBoolean.GetElementHashCode(System.Boolean)">
             <inheritdoc />
         </member>
+        <member name="M:Fusion.ElementReaderWriterBoolean.Read(System.ReadOnlySpan{System.Byte})">
+            <inheritdoc />
+        </member>
+        <member name="M:Fusion.ElementReaderWriterBoolean.Write(System.Span{System.Byte},System.Boolean)">
+            <inheritdoc />
+        </member>
+        <member name="M:Fusion.ElementReaderWriterBoolean.ReadRef(System.Span{System.Byte})">
+            <inheritdoc />
+        </member>
         <member name="T:Fusion.ElementReaderWriterString`1">
             <summary>
             Reader-writer for strings.
@@ -7791,11 +7857,16 @@
             <exception cref="T:System.NotSupportedException"></exception>
         </member>
         <member name="M:Fusion.ElementReaderWriterString`1.GetElementHashCode(System.String)">
-            <summary>
-            
-            </summary>
-            <param name="element"></param>
-            <returns></returns>
+            <inheritdoc/>
+        </member>
+        <member name="M:Fusion.ElementReaderWriterString`1.Read(System.ReadOnlySpan{System.Byte})">
+            <inheritdoc/>
+        </member>
+        <member name="M:Fusion.ElementReaderWriterString`1.Write(System.Span{System.Byte},System.String)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Fusion.ElementReaderWriterString`1.ReadRef(System.Span{System.Byte})">
+            <inheritdoc/>
         </member>
         <member name="T:Fusion.ElementReaderWriterUnmanaged`2">
             <summary>
@@ -7843,6 +7914,15 @@
             </summary>
             <param name="element">The element for which to get the hash code.</param>
             <returns>The hash code of the element.</returns>
+        </member>
+        <member name="M:Fusion.ElementReaderWriterUnmanaged`2.Read(System.ReadOnlySpan{System.Byte})">
+            <inheritdoc/>
+        </member>
+        <member name="M:Fusion.ElementReaderWriterUnmanaged`2.Write(System.Span{System.Byte},`0)">
+            <inheritdoc/>
+        </member>
+        <member name="M:Fusion.ElementReaderWriterUnmanaged`2.ReadRef(System.Span{System.Byte})">
+            <inheritdoc/>
         </member>
         <member name="T:Fusion.IFixedStorage">
             <summary>
@@ -8060,6 +8140,16 @@
             <param name="accuracy">The accuracy to use for decompression. That is, the number of bits after 
             the decimal point. Defaults to DEFAULT_ACCURACY.</param>
             <returns>The decompressed float value.</returns>
+        </member>
+        <member name="T:Fusion.FusionUtility">
+            <summary>
+            Static class for utility methods used across Fusion project.
+            </summary>
+        </member>
+        <member name="M:Fusion.FusionUtility.PruneMixedAuthorityHierarchy(UnityEngine.Transform,UnityEngine.Transform,Fusion.PlayerRef)">
+            <summary>
+            Search the hierarchy of the <paramref name="currentParent"/> for <see cref="T:Fusion.NetworkObject"/>s that do not have <paramref name="rootAuth"/> as the state authority and move them to <paramref name="targetParent"/>.
+            </summary>
         </member>
         <member name="M:Fusion.HashCodeUtilities.GetHashDeterministic(System.String,System.Int32)">
             <summary>
@@ -8321,6 +8411,35 @@
             </para>
             </summary>
         </member>
+        <member name="T:Fusion.IPluginBakedDataProvider">
+            <summary>
+            <see cref="T:Fusion.IPluginBakedDataProvider`1"/>, not intended to be implemented directly.
+            </summary>
+        </member>
+        <member name="M:Fusion.IPluginBakedDataProvider.Bake(Fusion.PluginBakedDataContext@)">
+            <see cref="M:Fusion.IPluginBakedDataProvider`1.Bake(Fusion.PluginBakedDataContext@)"/>
+        </member>
+        <member name="T:Fusion.IPluginBakedDataProvider`1">
+            <summary>
+            Implement on a <see cref="T:Fusion.NetworkBehaviour"/> to add BakedPluginData field of <typeparamref name="T"/>
+            to the exported class and serialized data.
+            </summary>
+            <typeparam name="T">Data type. If using the default exporter, needs to be Unity-serializable.
+            The data type needs to be visible in the plugin as well, so either define it with <see cref="M:Fusion.PluginCodeExportSettingsAttribute.#ctor(Fusion.PluginExportOptions)"/>
+            while also applying the attribute to required fields, or just keep the type definition in a file visible to the plugin.</typeparam>
+        </member>
+        <member name="M:Fusion.IPluginBakedDataProvider`1.Bake(Fusion.PluginBakedDataContext@)">
+            <summary>
+            Creates a baked-data object, right before serialization.
+            </summary>
+            <param name="context">Bake context. Empty for now, kept for future API compability</param>
+            <returns></returns>
+        </member>
+        <member name="T:Fusion.PluginBakedDataContext">
+            <summary>
+            Context for <see cref="M:Fusion.IPluginBakedDataProvider`1.Bake(Fusion.PluginBakedDataContext@)"/>.
+            </summary>
+        </member>
         <member name="T:Fusion.IReadOnlySpanAssignable">
             <summary>
             Marks a type as being able to be initialized with a ReadOnlySpan of uint values. Used for deserialization of generic types
@@ -8398,16 +8517,6 @@
         <member name="P:Fusion.NetworkArray`1.Item(System.Int32)">
             <summary>
             Indexer of array elements.
-            </summary>
-        </member>
-        <member name="M:Fusion.NetworkArray`1.#ctor(System.Byte*,System.Int32,Fusion.IElementReaderWriter{`0})">
-            <summary>
-            NetworkArray constructor.
-            </summary>
-        </member>
-        <member name="M:Fusion.NetworkArray`1.ToReadOnly">
-            <summary>
-            Returns a NetworkArrayReadOnly view of this array.
             </summary>
         </member>
         <member name="M:Fusion.NetworkArray`1.Get(System.Int32)">
@@ -8495,6 +8604,16 @@
             <summary>
             Returns the elements of this array as a string, with value separated by \n characters. Specifically for use in the Unity inspector.
             This is private and only is found by NetworkBehaviourEditor using reflection, so do not rename this method.
+            </summary>
+        </member>
+        <member name="M:Fusion.NetworkArray`1.#ctor(System.Byte*,System.Int32,Fusion.IElementReaderWriter{`0})">
+            <summary>
+            NetworkArray constructor.
+            </summary>
+        </member>
+        <member name="M:Fusion.NetworkArray`1.ToReadOnly">
+            <summary>
+            Returns a NetworkArrayReadOnly view of this array.
             </summary>
         </member>
         <member name="M:Fusion.NetworkArray`1.op_Implicit(Fusion.NetworkArray{`0})~Fusion.NetworkArrayReadOnly{`0}">
@@ -8834,7 +8953,7 @@
         </member>
         <member name="T:Fusion.NetworkDictionary`2">
             <summary>
-            Fusion type for networking Dictionaries. 
+            Fusion type for networking Dictionaries.
             Maximum capacity is fixed, and is set with the <see cref="T:Fusion.CapacityAttribute"/>.<br></br><br></br>
             <para>Typical Usage:
             <code>
@@ -8864,7 +8983,6 @@
             <summary>
             Move to next entry in dictionary.
             </summary>
-            <returns>Returns true if there is a next entry.</returns>
         </member>
         <member name="M:Fusion.NetworkDictionary`2.Enumerator.Reset">
             <summary>
@@ -8875,7 +8993,6 @@
             <summary>
             Current key/value pair.
             </summary>
-            <exception cref="T:System.InvalidOperationException">Thrown if enumerator is not valid.</exception>
         </member>
         <member name="M:Fusion.NetworkDictionary`2.Enumerator.Dispose">
             <summary>
@@ -8896,21 +9013,6 @@
             <summary>
             Key indexer. Gets/Sets value for specified key.
             </summary>
-        </member>
-        <member name="M:Fusion.NetworkDictionary`2.#ctor(System.Int32*,System.Int32,Fusion.IElementReaderWriter{`0},Fusion.IElementReaderWriter{`1})">
-            <summary>
-            Initializes a new instance of the NetworkDictionary struct with the specified data, capacity, and reader/writers.
-            </summary>
-            <param name="data">The pointer to the data of the dictionary.</param>
-            <param name="capacity">The capacity of the dictionary.</param>
-            <param name="keyReaderWriter">The reader/writer for the keys of the dictionary.</param>
-            <param name="valReaderWriter">The reader/writer for the values of the dictionary.</param>
-        </member>
-        <member name="M:Fusion.NetworkDictionary`2.ToReadOnly">
-            <summary>
-            Converts the current NetworkDictionary to a read-only version.
-            </summary>
-            <returns>A new instance of NetworkDictionaryReadOnly with the same data, capacity, and reader/writers as the current NetworkDictionary.</returns>
         </member>
         <member name="M:Fusion.NetworkDictionary`2.Clear">
             <summary>
@@ -8967,17 +9069,30 @@
             <param name="value">Returns value of removed item. Returns default value if key did not exist.</param>
             <returns>Returns true if key was found.</returns>
         </member>
+        <member name="M:Fusion.NetworkDictionary`2.ToArray">
+            <summary>
+            Copies all key-value pairs to a new array.
+            </summary>
+        </member>
         <member name="M:Fusion.NetworkDictionary`2.GetEnumerator">
             <summary>
             Returns an enumerator that iterates through the NetworkDictionary.
+            </summary>
+        </member>
+        <member name="M:Fusion.NetworkDictionary`2.#ctor(System.Int32*,System.Int32,Fusion.IElementReaderWriter{`0},Fusion.IElementReaderWriter{`1})">
+            <summary>
+            NetworkDictionary constructor.
+            </summary>
+        </member>
+        <member name="M:Fusion.NetworkDictionary`2.ToReadOnly">
+            <summary>
+            Converts the current NetworkDictionary to a read-only version.
             </summary>
         </member>
         <member name="M:Fusion.NetworkDictionary`2.op_Implicit(Fusion.NetworkDictionary{`0,`1})~Fusion.NetworkDictionaryReadOnly{`0,`1}">
             <summary>
             Converts the current NetworkDictionary to a read-only version.
             </summary>
-            <param name="value">The NetworkDictionary to convert.</param>
-            <returns>A new instance of NetworkDictionaryReadOnly with the same data, capacity, and reader/writers as the current NetworkDictionary.</returns>
         </member>
         <member name="T:Fusion.INetworkDictionary">
             <summary>
@@ -9051,7 +9166,7 @@
         </member>
         <member name="T:Fusion.NetworkLinkedList`1">
             <summary>
-            Fusion type for networking LinkedLists. 
+            Fusion type for networking LinkedLists.
             Maximum capacity is fixed, and is set with the <see cref="T:Fusion.CapacityAttribute"/>.<br></br><br></br>
             Typical Usage:
             <para><code>
@@ -9088,19 +9203,16 @@
             <summary>
             Advances the enumerator to the next element of the <see cref="T:Fusion.NetworkLinkedList`1"/>.
             </summary>
-            <returns>Returns true if the enumerator advanced to the next element.</returns>
         </member>
         <member name="M:Fusion.NetworkLinkedList`1.Enumerator.Reset">
             <summary>
-            Resets the enumerator to its initial position, which is before the first element in the collection.
+            Resets the enumerator to its initial position.
             </summary>
         </member>
         <member name="P:Fusion.NetworkLinkedList`1.Enumerator.Current">
             <summary>
             Gets the current element in the collection.
             </summary>
-            <returns>The current element in the collection.</returns>
-            <exception cref="T:System.InvalidOperationException">Thrown when the enumerator is positioned before the first element or after the last element.</exception>
         </member>
         <member name="M:Fusion.NetworkLinkedList`1.Enumerator.Dispose">
             <summary>
@@ -9121,21 +9233,6 @@
             <summary>
             Element indexer.
             </summary>
-        </member>
-        <member name="M:Fusion.NetworkLinkedList`1.#ctor(System.Byte*,System.Int32,Fusion.IElementReaderWriter{`0})">
-            <summary>
-            Initializes a new instance of the NetworkLinkedList struct with the specified data, capacity, and reader/writer.
-            </summary>
-            <param name="data">The pointer to the data of the list.</param>
-            <param name="capacity">The capacity of the list.</param>
-            <param name="rw">The reader/writer for the elements of the list.</param>
-        </member>
-        <member name="M:Fusion.NetworkLinkedList`1.Remap(System.Void*)">
-            <summary>
-            Remaps the current NetworkLinkedList to a new memory location.
-            </summary>
-            <param name="list">The pointer to the new memory location.</param>
-            <returns>A new instance of NetworkLinkedList with the same capacity and reader/writer, but mapped to the new memory location.</returns>
         </member>
         <member name="M:Fusion.NetworkLinkedList`1.Clear">
             <summary>
@@ -9171,12 +9268,6 @@
             <summary>
             Returns the index of the first occurrence of a value in the NetworkLinkedList.
             </summary>
-            <param name="value">The value to locate in the NetworkLinkedList. The value can be null for reference types.</param>
-            <param name="equalityComparer">An equality comparer to compare values. Must not be null.</param>
-            <returns>The zero-based index of the first occurrence of value within the entire NetworkLinkedList, if found; otherwise, -1.</returns>
-            <remarks>
-            This method performs a linear search; therefore, this method is an O(n) operation, where n is Count.
-            </remarks>
         </member>
         <member name="M:Fusion.NetworkLinkedList`1.Remove(`0)">
             <summary>
@@ -9192,11 +9283,25 @@
             <summary>
             Adds a value to the end of the list.
             </summary>
-            <param name="value">Value to add.</param>
+        </member>
+        <member name="M:Fusion.NetworkLinkedList`1.ToArray">
+            <summary>
+            Copies all elements to a new array.
+            </summary>
         </member>
         <member name="M:Fusion.NetworkLinkedList`1.GetEnumerator">
             <summary>
             Get the enumerator for the list.
+            </summary>
+        </member>
+        <member name="M:Fusion.NetworkLinkedList`1.#ctor(System.Byte*,System.Int32,Fusion.IElementReaderWriter{`0})">
+            <summary>
+            NetworkLinkedList constructor.
+            </summary>
+        </member>
+        <member name="M:Fusion.NetworkLinkedList`1.Remap(System.Void*)">
+            <summary>
+            Remaps the current NetworkLinkedList to a new memory location.
             </summary>
         </member>
         <member name="T:Fusion.INetworkLinkedList">
@@ -9208,7 +9313,6 @@
             <summary>
             Adds an item to the networked linked list.
             </summary>
-            <param name="item">The item to add to the linked list.</param>
         </member>
         <member name="T:Fusion.NetworkedWeavedLinkedListAttribute">
             <summary>
@@ -9730,6 +9834,43 @@
             <typeparam name="TSize">The size of the NetworkString.</typeparam>
             <returns>The capacity of a NetworkString of the specified size.</returns>
         </member>
+        <member name="T:Fusion.OffsetSetBuilder">
+            <summary/>
+        </member>
+        <member name="M:Fusion.OffsetSetBuilder.Add(System.Int32)">
+            <summary/>
+        </member>
+        <member name="M:Fusion.OffsetSetBuilder.MakeOffsetSet">
+            <summary/>
+        </member>
+        <member name="T:Fusion.OffsetSet">
+            <summary>
+            Represents a set of word offsets.
+            </summary>
+        </member>
+        <member name="M:Fusion.OffsetSet.#ctor(System.Int32[])">
+            <summary>
+            Represents a set of word offsets.
+            </summary>
+        </member>
+        <member name="P:Fusion.OffsetSet.IsEmpty">
+            <summary>
+            Returns true if the set contains no elements
+            </summary>
+        </member>
+        <member name="P:Fusion.OffsetSet.Values">
+            <summary>
+            A sequence of distinct, sorted values.
+            </summary>
+        </member>
+        <member name="P:Fusion.OffsetSet.AsArray">
+            <summary>
+            
+            </summary>
+        </member>
+        <member name="M:Fusion.OffsetSet.TryFind(System.Int32,System.Int32@)">
+            <summary/>
+        </member>
         <member name="T:Fusion.PlayerRef">
             <summary>
             Represents a Fusion player.
@@ -10071,12 +10212,28 @@
             <param name="value">The string to write.</param>
             <returns>The number of bytes written.</returns>
         </member>
+        <member name="M:Fusion.ReadWriteUtilsForWeaver.WriteStringUtf32NoHash(System.Span{System.Int32},System.String)">
+            <summary>
+            Writes a string to the provided memory location in UTF32 format without a hash.
+            </summary>
+            <param name="ptr">The memory location to write to.</param>
+            <param name="value">The string to write.</param>
+            <returns>The number of bytes written.</returns>
+        </member>
         <member name="M:Fusion.ReadWriteUtilsForWeaver.ReadStringUtf32NoHash(System.Int32*,System.Int32,System.String@)">
             <summary>
             Reads a string from the provided memory location in UTF32 format without a hash.
             </summary>
             <param name="ptr">The memory location to read from.</param>
             <param name="maxLength">The maximum length of the string.</param>
+            <param name="result">The string read from the memory location.</param>
+            <returns>The number of bytes read.</returns>
+        </member>
+        <member name="M:Fusion.ReadWriteUtilsForWeaver.ReadStringUtf32NoHash(System.ReadOnlySpan{System.Int32},System.String@)">
+            <summary>
+            Reads a string from the provided memory location in UTF32 format without a hash.
+            </summary>
+            <param name="ptr">The memory location to read from.</param>
             <param name="result">The string read from the memory location.</param>
             <returns>The number of bytes read.</returns>
         </member>
@@ -10090,12 +10247,29 @@
             <param name="cache">A reference to a cache string. This will be updated with the trimmed value of the input string.</param>
             <returns>The number of bytes written.</returns>
         </member>
+        <member name="M:Fusion.ReadWriteUtilsForWeaver.WriteStringUtf32WithHash(System.Span{System.Int32},System.String,System.String@)">
+            <summary>
+            Writes a string to the provided memory location in UTF32 format with a hash.
+            </summary>
+            <param name="ptr">The memory location to write to.</param>
+            <param name="value">The string to write.</param>
+            <param name="cache">A reference to a cache string. This will be updated with the trimmed value of the input string.</param>
+            <returns>The number of bytes written.</returns>
+        </member>
         <member name="M:Fusion.ReadWriteUtilsForWeaver.ReadStringUtf32WithHash(System.Int32*,System.Int32,System.String@)">
             <summary>
             Reads a string from the provided memory location in UTF32 format with a hash.
             </summary>
             <param name="ptr">The memory location to read from.</param>
             <param name="maxLength">The maximum length of the string.</param>
+            <param name="cache">A reference to a cache string. This will be updated with the read string if it matches the cached hashcode.</param>
+            <returns>The number of bytes read.</returns>
+        </member>
+        <member name="M:Fusion.ReadWriteUtilsForWeaver.ReadStringUtf32WithHash(System.ReadOnlySpan{System.Int32},System.String@)">
+            <summary>
+            Reads a string from the provided memory location in UTF32 format with a hash.
+            </summary>
+            <param name="ptr">The memory location to read from.</param>
             <param name="cache">A reference to a cache string. This will be updated with the read string if it matches the cached hashcode.</param>
             <returns>The number of bytes read.</returns>
         </member>
@@ -11606,9 +11780,26 @@
             Last tick this object received an update.
             </summary>
         </member>
+        <member name="P:Fusion.NetworkObject.IsRenderInterpolationReady">
+            <summary>
+            Returns <c>true</c> when this object's interpolated state is usable. Intended for the
+            remote-spawn hide/show pattern: hide in <see cref="M:Fusion.NetworkBehaviour.Spawned"/>
+            when this is <c>false</c>, show in <see cref="M:Fusion.SimulationBehaviour.Render"/>
+            once it becomes <c>true</c>, to avoid a brief visible stall.
+            <para/>
+            Always <c>true</c> on the state authority, hiding and showing isn't required
+            here as state authority spawned objects aren't interpolated
+            <para/>
+            <b>Note:</b> Do not hide by calling <c>gameObject.SetActive(false)</c> on this
+            NetworkObject's own GameObject (or any parent of it) in <see cref="M:Fusion.NetworkBehaviour.Spawned"/>.
+            Disabled GameObjects do not receive <see cref="M:Fusion.SimulationBehaviour.Render"/> callbacks,
+            so the show branch would never run and the object would stay hidden forever. Instead you could
+            toggle a child GameObject or disable individual Renderers
+            </summary>
+        </member>
         <member name="F:Fusion.NetworkObject.Flags">
             <summary>
-            Flags used for network object prefabs and similar 
+            Flags used for network object prefabs and similar
             </summary>
         </member>
         <member name="F:Fusion.NetworkObject.NetworkTypeId">
@@ -12476,6 +12667,11 @@
             The unique data for each player.
             </summary>
         </member>
+        <member name="F:Fusion.NetworkObjectHeader.PLUGIN_VERSION_WORD">
+            <summary>
+            The word index of the plugin version in the NetworkObjectHeader.
+            </summary>
+        </member>
         <member name="P:Fusion.NetworkObjectHeader.ByteCount">
             <summary>
             The size of the network object's data in bytes.
@@ -12579,6 +12775,12 @@
         <member name="F:Fusion.NetworkObjectHeader.BYTE_COUNT_OF_PLAYER_FLAGS">
             <summary>Byte size of <see cref="F:Fusion.NetworkObjectHeader.PlayerFlags"/>.</summary>
         </member>
+        <member name="F:Fusion.NetworkObjectHeader.BYTE_OF_PLUGIN_VERSION">
+            <summary>Byte offset of <see cref="F:Fusion.NetworkObjectHeader.PluginVersion"/>.</summary>
+        </member>
+        <member name="F:Fusion.NetworkObjectHeader.BYTE_COUNT_OF_PLUGIN_VERSION">
+            <summary>Byte size of <see cref="F:Fusion.NetworkObjectHeader.PluginVersion"/>.</summary>
+        </member>
         <member name="F:Fusion.NetworkObjectHeader.BYTE_OF__PADDING">
             <summary>Byte offset of <see cref="F:Fusion.NetworkObjectHeader._padding"/>.</summary>
         </member>
@@ -12635,6 +12837,12 @@
         </member>
         <member name="P:Fusion.NetworkObjectMeta.InputAuthority">
             <summary>Get the Player that has input authority over this object.</summary>
+        </member>
+        <member name="M:Fusion.NetworkObjectMeta.NextSnapshot(Fusion.Tick,System.Boolean)">
+            <summary>
+            Copies the new latest from the previous latest or this is the first snapshot to be created,
+            either copy from meta or keep zeroed (controlled by <paramref name="copyInitialState"/>).
+            </summary>
         </member>
         <member name="T:Fusion.NetworkObjectNestingKey">
             <summary>
@@ -12976,6 +13184,16 @@
             <returns>
             A signed integer that indicates the relative values of x and y.
             </returns>
+        </member>
+        <member name="T:Fusion.NetworkObjectTypeDescriptor">
+            <summary>
+            Describes a type identified by <see cref="T:Fusion.NetworkObjectTypeId"/>
+            </summary>
+        </member>
+        <member name="F:Fusion.NetworkObjectTypeDescriptor.PluginAuthorityOffsets">
+            <summary>
+            Offsets that are write-only, i.e. ignored when being read.
+            </summary>
         </member>
         <member name="T:Fusion.NetworkTypeIdKind">
             <summary>
@@ -13909,7 +14127,7 @@
             Context passed to <see cref="T:Fusion.RpcInvokeDelegate"/>.
             </summary>
         </member>
-        <member name="M:Fusion.RpcInvokeContext.#ctor(Fusion.NetworkRunner,Fusion.NetworkBehaviour,System.Int32,Fusion.PlayerRef,Fusion.PlayerRef,System.ReadOnlySpan{System.Byte},System.Boolean*)">
+        <member name="M:Fusion.RpcInvokeContext.#ctor(Fusion.NetworkRunner,Fusion.NetworkBehaviour,System.Int32,Fusion.PlayerRef,Fusion.PlayerRef,System.ReadOnlySpan{System.Byte},System.Boolean*,System.Type)">
             <summary>
             Context passed to <see cref="T:Fusion.RpcInvokeDelegate"/>.
             </summary>
@@ -13947,6 +14165,11 @@
         <member name="P:Fusion.RpcInvokeContext.IsValidating">
             <summary>
             If true, this RPC is in validating mode.
+            </summary>
+        </member>
+        <member name="F:Fusion.RpcInvokeContext.TargetType">
+            <summary>
+            Target type.
             </summary>
         </member>
         <member name="P:Fusion.RpcInvokeContext.PayloadReader">
@@ -14379,18 +14602,10 @@
         </member>
         <member name="T:Fusion.NetworkRunner">
             <summary>
-            Host Migration related code in order to get a copy of the Simulation State
-            </summary>
-            <summary>
             Represents a Server or Client Simulation. IMPORTANT: You can only use a NetworkRunner once. Once that NetworkRunner 
             disconnects from a game session or fails to connect it should be destroyed, and a new Network Runner instance should
             be created to start any new game sessions. For more information see the 
             <a href="https://doc.photonengine.com/fusion/v2/manual/network-runner">Online Manual</a>.
-            </summary>
-            <summary>
-            We want this to run as close as possible to the normal Unity physics, i.e. right at the end of FixedUpdate()
-            https://docs.unity3d.com/6000.0/Documentation/Manual/execution-order.html
-            So set a very high execution order.
             </summary>
         </member>
         <member name="P:Fusion.NetworkRunner.IsResume">
@@ -14796,6 +15011,11 @@
             Returns a <see cref="T:Fusion.PlayerRef"/> for the local simulation. For a dedicated server <see cref="P:Fusion.PlayerRef.IsRealPlayer"/> will equal false. 
             PlayerRefs are assigned in order from 0 to MaxPlayers-1 and are re-used as players join and leave.
             The only caveat is that the server player (if one exists), always gets the last index no matter how many clients are connected.
+            </summary>
+        </member>
+        <member name="P:Fusion.NetworkRunner.InputTick">
+            <summary>
+            The tick of the most recent input collected (or the input being collected, when evaluated during <see cref="M:Fusion.INetworkRunnerCallbacks.OnInput(Fusion.NetworkRunner,Fusion.NetworkInput)"/>).
             </summary>
         </member>
         <member name="P:Fusion.NetworkRunner.Tick">
@@ -16424,6 +16644,29 @@
             All hub content.
             </summary>
         </member>
+        <member name="T:Fusion.NetworkProjectConfig.InvokeRenderModes">
+            <summary/>
+        </member>
+        <member name="F:Fusion.NetworkProjectConfig.InvokeRenderModes.NotInBatchMode">
+            <summary>
+            Render will not be invoked when running batch mode.
+            </summary>
+        </member>
+        <member name="F:Fusion.NetworkProjectConfig.InvokeRenderModes.Always">
+            <summary>
+            Render will always be invoked.
+            </summary>
+        </member>
+        <member name="F:Fusion.NetworkProjectConfig.InvokeRenderModes.NotInEditorAsServer">
+            <summary>
+            Render will not be invoked when running as Serve while in Unity Editor.
+            </summary>
+        </member>
+        <member name="F:Fusion.NetworkProjectConfig.InvokeRenderModes.NotInBatchModeAndEditorAsServer">
+            <summary>
+            <see cref="F:Fusion.NetworkProjectConfig.InvokeRenderModes.NotInBatchMode"/> and <see cref="F:Fusion.NetworkProjectConfig.InvokeRenderModes.NotInEditorAsServer"/> combined.
+            </summary>
+        </member>
         <member name="F:Fusion.NetworkProjectConfig.DefaultResourceName">
             <summary>
             Default file name for the <see cref="T:Fusion.NetworkProjectConfig"/> asset
@@ -16497,10 +16740,13 @@
             Useful for transition from Fusion 1.x. 
             </summary>
         </member>
-        <member name="F:Fusion.NetworkProjectConfig.InvokeRenderInBatchMode">
+        <member name="F:Fusion.NetworkProjectConfig.InvokeRenderMode">
             <summary>
-            Signal if the <see cref="M:Fusion.SimulationBehaviour.Render"/> callbacks should be invoked in Batch Mode.
+            Signal if the <see cref="M:Fusion.SimulationBehaviour.Render"/> callbacks should be invoked.
             </summary>
+        </member>
+        <member name="P:Fusion.NetworkProjectConfig.InvokeRenderInBatchMode">
+            <summary/>
         </member>
         <member name="F:Fusion.NetworkProjectConfig.NetworkIdIsObjectName">
             <summary>
@@ -16788,6 +17034,9 @@
         </member>
         <member name="F:Fusion.NetworkSpawnStatus.FailedLocalPlayerNotYetSet">
             <summary>Failed to spawn because the local player is not yet set.</summary>
+        </member>
+        <member name="F:Fusion.NetworkSpawnStatus.FailedSimulationNotRunning">
+            <summary>Failed to spawn because the simulation is not yet running.</summary>
         </member>
         <member name="T:Fusion.NetworkSpawnFlags">
             <summary>
@@ -18798,6 +19047,11 @@
             </para>
             </summary>
         </member>
+        <member name="P:Fusion.Simulation.InputTick">
+            <summary>
+            The tick of the most recent input collected (or the input being collected, when evaluated during <see cref="M:Fusion.INetworkRunnerCallbacks.OnInput(Fusion.NetworkRunner,Fusion.NetworkInput)"/>).
+            </summary>
+        </member>
         <member name="P:Fusion.Simulation.Tick">
             <summary>
             The tick associated with the current state of networked objects, or the current simulation tick being processed (when evaluated during FixedUpdateNetwork).
@@ -19081,6 +19335,12 @@
             Callback invoked after the Simulation Update
             </summary>
         </member>
+        <member name="M:Fusion.Simulation.UpdateSimulationStateForMasterClientObjects(System.Boolean)">
+            <summary>
+            Called when Master Client status is gained or lost 
+            </summary>
+            <param name="isMasterClient">Whether we are Master Client currently</param>
+        </member>
         <member name="M:Fusion.Simulation.Update(System.Double)">
             <summary>
             Forwards the Simulation based on the Delta Time
@@ -19104,6 +19364,19 @@
         <member name="M:Fusion.Simulation.GetLocalAuthorityMask(Fusion.NetworkObjectHeader@)">
             <summary>
             Gets a bitmask of <see cref="T:Fusion.AuthorityMasks"/> flags, representing the current local authority over this <see cref="T:Fusion.NetworkObjectMeta"/>.
+            </summary>
+        </member>
+        <member name="M:Fusion.Simulation.DrainPendingMessages">
+            <summary>
+            WARNING: This was intentionally extracted from the finally above and made NoInlining
+            if this code is inlined or placed inside the finally block it can cause a SIGSEGV
+            with no callstack if it iterates >2 times. Or cause it to rethrow a NulLReferenceException
+            if iterated once. 0 iterations works fine.
+            
+            This crash only manifests itself in Mono, using a release DLL when an exception is thrown
+            in the try block. The cause is almost certainly a bug in the mono jit compilation of the 
+            try{}finally{} unwinding. Some analysis has been carried out of the jitted bytecode to
+            back up this theory.
             </summary>
         </member>
         <member name="T:Fusion.Simulation.SimulationMessageResultCode">
@@ -20024,6 +20297,30 @@
         </member>
         <member name="F:Fusion.SimulationMessageInternal_SharedModeSetPriority.BYTE_COUNT_OF_PRIORITY">
             <summary>Byte size of <see cref="F:Fusion.SimulationMessageInternal_SharedModeSetPriority.Priority"/>.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.SIZE">
+            <summary>Total size of the struct in bytes.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.WORD_COUNT">
+            <summary>Total word count of the struct (4-byte words).</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.BYTE_OF_ITEM">
+            <summary>Byte offset of <see cref="F:Fusion.SimulationMessageInternal_TestMessage.Item"/>.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.BYTE_COUNT_OF_ITEM">
+            <summary>Byte size of <see cref="F:Fusion.SimulationMessageInternal_TestMessage.Item"/>.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.BYTE_OF_ID">
+            <summary>Byte offset of <see cref="F:Fusion.SimulationMessageInternal_TestMessage.Id"/>.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.BYTE_COUNT_OF_ID">
+            <summary>Byte size of <see cref="F:Fusion.SimulationMessageInternal_TestMessage.Id"/>.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.BYTE_OF_VALUE">
+            <summary>Byte offset of <see cref="F:Fusion.SimulationMessageInternal_TestMessage.Value"/>.</summary>
+        </member>
+        <member name="F:Fusion.SimulationMessageInternal_TestMessage.BYTE_COUNT_OF_VALUE">
+            <summary>Byte size of <see cref="F:Fusion.SimulationMessageInternal_TestMessage.Value"/>.</summary>
         </member>
         <member name="T:Fusion.SimulationMessagePtr">
             <summary>

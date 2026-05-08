@@ -1148,6 +1148,12 @@ namespace Fusion {
 #if FUSION_TRACE_FORECAST
       | TraceChannels.Forecast
 #endif
+#if FUSION_TRACE_AUTOMATEDRUN
+      | TraceChannels.AutomatedRun
+#endif
+#if FUSION_TRACE_PLUGINVERSION
+      | TraceChannels.PluginVersion
+#endif
       ;
   }
 }
@@ -1347,25 +1353,6 @@ namespace Fusion {
         msg => { Log.TraceRealtime(msg); },
         (exp, msg) => { Log.TraceRealtimeError($"{msg}. {exp}"); }
       );
-    }
-  }
-}
-
-#endregion
-
-
-#region Assets/Photon/Fusion/Runtime/FusionRuntimeCheck.cs
-
-namespace Fusion {
-  using UnityEngine;
-
-  /// <summary>
-  /// Used to initialize Runtime flags for Fusion
-  /// </summary>
-  internal static class FusionRuntimeCheck {
-    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
-    private static void RuntimeCheck() {
-      RuntimeUnityFlagsSetup.Check_UNITY_WEBGL();
     }
   }
 }
